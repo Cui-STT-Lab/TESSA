@@ -7,7 +7,13 @@
 run_Test2(object, genes = NULL, pv_threshold = 0.05, LOO = FALSE)
 }
 \arguments{
+\item{genes}{The genes to do Test2. If NULL, then test all the uTSVGs}
+
 \item{pv_threshold}{The pvalue threshold for test1, to get the uTSVGs that are significant in Test1}
+
+\item{LOO}{If TRUE, run LOO double dipping correction for Test2}
+
+\item{obejct}{The TESSA object}
 }
 \description{
 Run Test1 for all lineages

@@ -2,10 +2,18 @@
 % Please edit documentation in R/TESSA.R
 \name{TT}
 \alias{TT}
-\title{a faster version of tr(M1 %*% M2)}
+\title{a faster version of trace of matrix multiplication}
 \usage{
 TT(M1, M2)
 }
+\arguments{
+\item{M1}{A numeric matrix}
+
+\item{M2}{A numeric matrix}
+}
+\value{
+Trace of matrix multiplication
+}
 \description{
-a faster version of tr(M1 %*% M2)
+a faster version of trace of matrix multiplication
 }

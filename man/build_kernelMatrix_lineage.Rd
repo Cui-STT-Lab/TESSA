@@ -4,12 +4,14 @@
 \alias{build_kernelMatrix_lineage}
 \title{Build the Gaussian kernel matrix for one lineage}
 \usage{
-build_kernelMatrix_lineage(object, lineage = "lineage1")
+build_kernelMatrix_lineage(object, lineage = "lineage1", bw = NULL)
 }
 \arguments{
 \item{object}{The Tessa object.}
 
 \item{lineage}{The name of the lineage to use}
+
+\item{bw}{The bandwidth, default is NULL}
 }
 \value{
 The Tessa object with the Gaussian kernel matrix.

@@ -4,10 +4,12 @@
 \alias{build_kernelMatrix}
 \title{Build the Gaussian kernel matrix}
 \usage{
-build_kernelMatrix(object)
+build_kernelMatrix(object, bw = NULL)
 }
 \arguments{
 \item{object}{The Tessa object.}
+
+\item{bw}{The bandwidth, default is NULL}
 }
 \value{
 The Tessa object with the Gaussian kernel matrix.
