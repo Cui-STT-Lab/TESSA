@@ -4,12 +4,22 @@
 \alias{run_Test1}
 \title{Run Test1 for all genes, all lineages}
 \usage{
-run_Test1(object, LOO = FALSE, LOO_pv_threshold = 0.05, npcs = 30, acc = 1e-15)
+run_Test1(
+  object,
+  LOO = FALSE,
+  num_cores = 1,
+  LOO_pv_threshold = 0.05,
+  npcs = 30,
+  acc = 1e-15,
+  parallel = FALSE
+)
 }
 \arguments{
 \item{object}{The TESSA object}
 
 \item{LOO}{If TRUE, do LOO double dipping correction}
+
+\item{npcs}{The PC number to use in slingshot pseudotime estimation}
 
 \item{acc}{If pvalue has too many zeros, decrease this number to adjust the lower limit of pvalue}
 }

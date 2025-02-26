@@ -28,8 +28,7 @@ setClass("Tessa", slots = list(
   bandwidth = "numeric",
   normalized = "logical",
   signature_genes = "character",
-  result = "list",
-  bandwidth_vec = "list"
+  result = "list"
 ))
 
 setMethod("print", "Tessa", function(x) {
@@ -230,43 +229,16 @@ gaussian_distance_normalized_kernel = function(X = NULL,sigma = NULL){
 
 
 #' @title Build the Gaussian kernel matrix for one lineage
-#' @description
-#' Build the Gaussian kernel matrix to model correlation between spots.
-#' The Gaussian kernel bandwidth will be selected automatically:
-#' for datasets with 5000 spots or fewer,
-#' non-parametric Sheather-Jones' bandwidths are computed for each gene,
-#' and the median of these values is used as the common bandwidth;
-#' for datasets with more than 5000 spots, Silverman's bandwidths are computed for each gene,
-#' and the median of these gene-specific bandwidths is used as the common bandwidth.
 #' @param object The Tessa object.
 #' @param lineage The name of the lineage to use
-#' @param bw The bandwidth, default is NULL
+#' @param bw The numeric bandwidth
 #' @return The Tessa object with the Gaussian kernel matrix.
-
-build_kernelMatrix_lineage <- function(object,lineage='lineage1', bw = NULL){
+#' @export
+build_kernelMatrix_lineage <- function(object,lineage='lineage1', bw){
   meta_df <- na.omit(object@meta_df[,c('x','y',lineage)])
   counts <- object@gene_expression
   counts <- counts[,colnames(counts)[match(rownames(meta_df), colnames(counts))],drop = FALSE]
-  n <- nrow(counts)
   m <- ncol(counts)
-
-  if(!is.null(bw)){
-    object@bandwidth[lineage] <- bw
-  }else{
-    if (m > 5000) {
-      ## Bandwidth selection by Silverman's
-      bw_vector <- apply(counts, MARGIN = 1, stats::bw.nrd0)
-      bw <- median(na.omit(bw_vector))
-      object@bandwidth[lineage] <- bw
-      object@bandwidth_vec[[lineage]] <- bw_vector
-    } else {
-      ## Bandwidth selection by SJ's
-      bw_vector <- apply(counts, MARGIN = 1, stats::bw.SJ)
-      bw <- median(na.omit(bw_vector))
-      object@bandwidth[lineage] <- bw
-      object@bandwidth_vec[[lineage]] <- bw_vector
-    }
-  }
   ## Gaussian kernel, with min-max normalized distance
   KK_S <- gaussian_distance_normalized_kernel(X = meta_df[,c('x','y')], sigma = bw) + diag(rep(1e-9, m ))
   KK_T <- gaussian_distance_normalized_kernel(X = meta_df[,lineage], sigma = bw)  + diag(rep(1e-9, m ))
@@ -278,13 +250,31 @@ build_kernelMatrix_lineage <- function(object,lineage='lineage1', bw = NULL){
 
 #' @title Build the Gaussian kernel matrix
 #' @param object The Tessa object.
-#' @param bw The bandwidth, default is NULL
+#' @param method The method of bandwidth selection, default is NULL
 #' @return The Tessa object with the Gaussian kernel matrix.
 #' @export
-build_kernelMatrix <- function(object, bw = NULL){
+build_kernelMatrix <- function(object, method = NULL, bw = NULL){
+  ## bandwidth selection
+  counts <- object@gene_expression
+  if(!is.null(bw)){
+    object@bandwidth <- bw
+  }else{
+    if(is.null(method)){
+      method = ifelse(ncol(counts) < 5000, 'SJ', 'nrd')
+    }
+    if(method == 'SJ'){
+      bw_vector <- apply(counts, MARGIN = 1, stats::bw.SJ)
+      object@bandwidth <- median(na.omit(bw_vector))
+    }else{
+      bw_vector <- apply(counts, MARGIN = 1, stats::bw.nrd)
+      object@bandwidth <- median(na.omit(bw_vector))
+    }
+  }
+
+  ## construct kernel matrix for each lineage
   t_vars <- str_subset( colnames(object@meta_df),'lineage')
   for(t_var in t_vars ){
-    object <- build_kernelMatrix_lineage(object, lineage = t_var, bw = bw )
+    object <- build_kernelMatrix_lineage(object, lineage = t_var, bw = object@bandwidth )
   }
   object
 }
@@ -297,8 +287,6 @@ build_kernelMatrix <- function(object, bw = NULL){
 #' @importFrom pracma pinv
 #' @importFrom CompQuadForm davies liu
 Test1 = function(Y, covariates = NULL, kernel_mat_list, acc = 1e-7){
-  # print('Test1')
-  # print(str(Y))
   n = nrow(Y)
   ## setup covariate
   if (is.null(covariates)){
@@ -339,7 +327,6 @@ Test1 = function(Y, covariates = NULL, kernel_mat_list, acc = 1e-7){
   scores <- nominators / denonimators * (n - num_cov)
 
   ## define pvlaues
-  # print('davies p values')
   pvals <- rep(0,length(scores))
   for(i in seq_len(length(scores))){
     lambda <- c(phis[1:k] - scores[i] / (n - num_cov), ones(1, q) * - scores[i] / (n - num_cov))
@@ -398,7 +385,7 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
 
   ## estimate pseudotime
   signature_genes <- setdiff(object@signature_genes, gene)
-  embedding <- prcomp_irlba(t(Y[signature_genes,]), scale. = TRUE, n = npcs)$x
+  embedding <- prcomp_irlba(t(Y[signature_genes,,drop = FALSE]), scale. = TRUE, n = npcs)$x
   sim <- SingleCellExperiment(assays = Y,
                               reducedDims = SimpleList(PCA = embedding),
                               colData = DataFrame(clusterlabel = rep("0", ncol(Y)) )
@@ -409,11 +396,13 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
 
   ## replaced by new pseudotime
   object_loo <- CreateTessaObject(counts = Y[gene,,drop =FALSE ], meta_df = loc_df,
-                              signature_genes =  signature_genes,
-                              covariates = object@covariates, normalized = object@normalized )
+                                  signature_genes =  signature_genes,
+                                  covariates = object@covariates, normalized = object@normalized )
 
-  object_loo <- build_kernelMatrix(object_loo,bw = object@bandwidth[lineage])
+  object_loo <- build_kernelMatrix(object_loo,  bw = object@bandwidth)
   object_loo <- run_Test1_lineage(object_loo, lineage = lineage,acc = acc )
+  # tmp <- 'here'
+  # return(tmp)
   pv <- object_loo@result[[lineage]]$Test1$pvs[1]
   pv
 }
@@ -422,24 +411,32 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
 #' @param object The TESSA object
 #' @param LOO If TRUE, do LOO double dipping correction
 #' @param acc If pvalue has too many zeros, decrease this number to adjust the lower limit of pvalue
+#' @param npcs The PC number to use in slingshot pseudotime estimation
 #' @return The TESSA object
-#' @import pracma CompQuadForm
+#' @import pracma CompQuadForm parallel
+#' @importFrom parallel parLapply
 #' @importFrom pracma pinv
 #' @importFrom CompQuadForm davies liu
 #' @export
-run_Test1 = function(object, LOO = FALSE, LOO_pv_threshold = 0.05, npcs = 30, acc = 1e-15 ){ #, kernel_names = c('kernel_S','kernel_T', 'kernel_error')
-  t_vars = str_subset( colnames(meta_df),'lineage')
+run_Test1 = function(object, LOO = FALSE, num_cores = 1,LOO_pv_threshold = 0.05, npcs = 30, acc = 1e-15,parallel = FALSE ){ #, kernel_names = c('kernel_S','kernel_T', 'kernel_error')
+  t_vars = str_subset( colnames(object@meta_df),'lineage')
   for(lineage in t_vars){
     object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
+    test_res <- object@result[[lineage]]$Test1
+    DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
+    object@result[[lineage]]$DP_genes = DP_genes
     if(LOO){
-      test_res <- object@result[[lineage]]$Test1
-      DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
-      object@result[[lineage]]$DP_genes = DP_genes
-      DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
-        print(gene)
-        run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
-      }))
-      print(DP_genes_pvs)
+      if(parallel){
+        cl <- makeCluster(num_cores)
+        DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
+          run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
+        },object, lineage, npcs))
+        stopCluster(cl)
+      }else{
+        DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
+          run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
+        }))
+      }
       test_res$pvs_LOO <- test_res$pvs
       test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
       test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
@@ -465,6 +462,216 @@ TT <- function(M1, M2){
 }
 
 
+## use gatson not MM4LMM, b/c it is the fastest by
+## https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1009659
+#' @title Individual Test for TVG and SVG
+#' @param Y The numeric matrix with n spots (row) and k genes (column)
+#' @param covariates Covariates X as fixed effect
+#' @param kernel_mat_list A list of kernel matrix, as random effect. kernel_S, kernel_T and kernel_error
+#' @import gaston
+#' @importFrom gaston lmm.aireml
+Test2 <- function(object, gene, K_test, lineage = 'lineage1', num_cores = 1){
+  KList = object@kernel[[lineage]][setdiff(names(object@kernel[[lineage]]), c(K_test, 'kernel_error'))]
+  K_alt = object@kernel[[lineage]][[K_test]]
+  Y = object@gene_expression
+  Y = Y[gene,colnames(Y)[match(rownames(K_alt),colnames(Y))]]
+  n = length(Y)
+  if(!is.null(object@covariates )){
+    X <- object@covariates
+  }else{
+    X <- matrix(1, n, 1)
+  }
+
+  ## parameter estimation
+  model.l <- gaston::lmm.aireml(Y = Y, X = X,K = KList,verbose = FALSE)
+  VCs <- c(model.l$tau, model.l$sigma2 );names(VCs) <- c(K_test, 'kernel_error')
+  ## if directly use estimation (may try extract info from algo )
+  V_l <-  0
+  for(i in seq_along(KList)){
+    V_l <- V_l +  model.l$tau * KList[[i]]
+  }
+  V_l <- V_l + model.l$sigma2*object@kernel[[lineage]][['kernel_error']]
+  # V_l_inv <- invert(V_l)
+  V_l_inv <- inv(V_l)
+  P_l <- V_l_inv - V_l_inv%*%X%*% invert(t(X)%*%V_l_inv%*%X) %*%t(X)%*%V_l_inv
+
+  Q <- (t(Y) %*% P_l %*% K_alt %*% P_l%*% Y )/2
+  e <- TT(P_l, K_alt)/2
+
+  num_VC = length(KList) #number of VC in Null model
+  Ill_values <- c()
+  for(i in seq_along(KList)){
+    for(j in seq_along(KList)){
+      Ill_values <- c(Ill_values, TT(P_l %*% KList[[i]], P_l %*% KList[[j]]  ))
+    }
+  }
+
+  I_l_l <- matrix(Ill_values ,nrow = num_VC ,ncol = num_VC, byrow = TRUE )/2
+  Il_l <- matrix(unlist(lapply(KList, function(K){TT(P_l %*% K_alt, P_l %*% K )}))
+                 ,nrow = 1 ,ncol = num_VC, byrow = TRUE)/2
+  Ill <- TT(P_l %*% K_alt, P_l %*% K_alt )/2
+  Itt <- Ill-Il_l%*%pinv(I_l_l)%*%t(Il_l) #Ill_tilde
+  k <- Itt/e/2; v=2*e^2/Itt
+  pvalue <- pchisq(Q/k, df=v, lower.tail=F)
+  out <- list(gene = gene,VCs=VCs, Score=Q, df=v, scale=k, p.value=pvalue)
+  return(out)
+}
+
+
+#' @title Run Test2 for selected genes for one lineage
+#' @param obejct  The TESSA object
+#' @param genes The genes to do Test2. If NULL, then test all the uTSVGs
+#' @param pv_threshold The pvalue threshold for test1, to get the uTSVGs that are significant in Test1
+#' @param LOO If TRUE, run LOO double dipping correction for Test2
+#' @param npcs The PC number to use in slingshot pseudotime estimation
+#' @import parallel
+#' @importFrom parallel parLapply parLapplyLB
+#' @export
+run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE,npcs = 30,num_cores = 1, parallel = FALSE){
+  meta_df <- na.omit(object@meta_df[,c('x','y',lineage)])
+  Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(meta_df), colnames(object@gene_expression))],drop = FALSE]
+
+  if(!is.null(genes)){
+    cat('run Test2 on user defined ', length(genes) ,' uTSVGs on all lineages', '\n')
+  }else{
+    Test1_result <- get_Test1_result(object,lineage = lineage)
+    if('pvs_adj_LOO' %in% colnames(Test1_result)){
+      genes <- Test1_result$geneid[Test1_result$pvs_adj_LOO < 0.05 ]
+      cat('run Test2 on', length(genes) ,'uTSVGs', '\n')
+    }else{
+      genes <- Test1_result$geneid[Test1_result$pvs_adj < 0.05, ]
+      cat('run Test2 on', length(genes) ,'uTSVGs without double dipping correction', '\n')
+    }
+  }
+
+  if(LOO){
+    if("DP_genes" %in% names(object@result[[lineage]])){
+      DP_genes <- object@result[[lineage]]$DP_genes
+    }else{
+      DP_genes <- intersect(genes, object@signature_genes)
+    }
+  }
+
+  # # #!test
+  # genes <- genes[1:20]
+  # print(genes)
+  # # #!test
+  res_list <- list()
+  for(K_test_name in c( 'kernel_S', 'kernel_T')){
+    if(parallel){
+      res <- mclapply(genes, function(gene){
+        if(LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)){
+          ## only run LOO on TVGs detection, if this gene is used to estimate pseudotime
+          loc_df = meta_df
+          signature_genes <- setdiff(object@signature_genes, gene)
+          embedding <- prcomp_irlba(t(Y[signature_genes, ,drop = FALSE]), scale. = TRUE, n = npcs)$x
+          sim <- SingleCellExperiment(assays = Y,
+                                      reducedDims = SimpleList(PCA = embedding),
+                                      colData = DataFrame(clusterlabel = rep("0", ncol(Y)) )
+          )
+          sim  <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA',start.clus="0" )
+          loc_df[, lineage] = sim@colData@listData$slingPseudotime_1
+
+          object_loo <- CreateTessaObject(counts = Y[gene,,drop = FALSE ], meta_df = loc_df,
+                                          signature_genes =  signature_genes,
+                                          covariates = object@covariates, normalized = object@normalized )
+          object <- build_kernelMatrix(object_loo, bw = object@bandwidth)
+          test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+        }else{
+          test2_out <-Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+        }
+        test2_out
+      },mc.cores = num_cores)
+
+      # cl <- makeCluster(num_cores)
+      # res <- parLapply(cl, genes, function(gene, object, meta_df, Y, npcs, K_test_name, LOO, DP_genes, lineage) {
+      #   if (LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)) {
+      #     ## Only run LOO on TVGs detection if this gene is used to estimate pseudotime
+      #     loc_df <- meta_df
+      #     signature_genes <- setdiff(object@signature_genes, gene)
+      #     embedding <- prcomp_irlba(t(Y[signature_genes, , drop = FALSE]), scale. = TRUE, n = npcs)$x
+      #     sim <- SingleCellExperiment(
+      #       assays = Y,
+      #       reducedDims = SimpleList(PCA = embedding),
+      #       colData = DataFrame(clusterlabel = rep("0", ncol(Y)))
+      #     )
+      #     sim <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA', start.clus = "0")
+      #     loc_df[, lineage] <- sim@colData@listData$slingPseudotime_1
+
+      #     object_loo <- CreateTessaObject(
+      #       counts = Y[gene, , drop = FALSE],
+      #       meta_df = loc_df,
+      #       signature_genes = signature_genes,
+      #       covariates = object@covariates,
+      #       normalized = object@normalized
+      #     )
+      #     object_loo <- build_kernelMatrix(object_loo, bw = object@bandwidth)
+      #     test2_out <- Test2(object = object_loo, gene = gene, K_test = K_test_name, lineage = lineage)
+      #   } else {
+      #     test2_out <- Test2(object = object, gene = gene, K_test = K_test_name, lineage = lineage)
+      #   }
+      #   test2_out
+
+      # }, object, meta_df, Y, npcs, K_test_name, LOO, DP_genes, lineage)  # Pass arguments explicitly
+      # stopCluster(cl)
+    }else{
+      res <- lapply(genes, function(gene){
+        if(LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)){
+          ## only run LOO on TVGs detection, if this gene is used to estimate pseudotime
+          loc_df = meta_df
+          signature_genes <- setdiff(object@signature_genes, gene)
+          embedding <- prcomp_irlba(t(Y[signature_genes, ,drop = FALSE]), scale. = TRUE, n = npcs)$x
+          sim <- SingleCellExperiment(assays = Y,
+                                      reducedDims = SimpleList(PCA = embedding),
+                                      colData = DataFrame(clusterlabel = rep("0", ncol(Y)) )
+          )
+          sim  <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA',start.clus="0" )
+          loc_df[, lineage] = sim@colData@listData$slingPseudotime_1
+
+          object_loo <- CreateTessaObject(counts = Y[gene,,drop = FALSE ], meta_df = loc_df,
+                                          signature_genes =  signature_genes,
+                                          covariates = object@covariates, normalized = object@normalized )
+          object <- build_kernelMatrix(object_loo, bw = object@bandwidth)
+          test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+        }else{
+          test2_out <-Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+        }
+        test2_out
+      })
+    }
+    # print(str(res))
+
+    res_list[[K_test_name]] <- unlist(lapply(res, function(x){x$p.value}))
+  }
+  # print(str(res_list %>% bind_cols()))
+  res_df <- res_list %>% bind_cols() %>% mutate(geneid = genes) %>%
+    rename('kernel_T' = 'TVG_pvs', 'kernel_S' = 'SVG_pvs') %>%
+    mutate(TVG_pvs_adj = p.adjust(TVG_pvs, method = 'BY'),
+           SVG_pvs_adj = p.adjust(SVG_pvs, method = 'BY'))
+  object@result[[lineage]][['Test2']] <- res_df[,c('geneid', 'TVG_pvs', 'TVG_pvs_adj', 'SVG_pvs', 'SVG_pvs_adj')]
+  object
+}
+
+#' @title Run Test2 for all lineages
+#' @param obejct  The TESSA object
+#' @param genes The genes to do Test2. If NULL, then test all the uTSVGs
+#' @param pv_threshold The pvalue threshold for test1, to get the uTSVGs that are significant in Test1
+#' @param LOO If TRUE, run LOO double dipping correction for Test2
+#' @export
+run_Test2 = function(object, genes = NULL, pv_threshold = 0.05, LOO = TRUE){
+  if(!is.null(genes)){
+    cat('run Test2 on user defined ', length(genes) ,' uTSVGs on all lineages', '\n')
+  }
+  t_vars = str_subset( colnames(object@meta_df),'lineage')
+  for(lineage in t_vars){
+    object <- run_Test2_lineage(object, lineage = lineage, genes = genes, LOO = LOO)
+  }
+  object
+
+}
+
+
+
 #' @title Retrieve Test1 result for one or all lineages
 #' @param obejct A TESSA object
 #' @param lineage Name of lineage
@@ -484,133 +691,22 @@ get_Test1_result = function(object, lineage = NULL){
 }
 
 
-#TODO: try gatson, b/c it is the fastest by
-## https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1009659
-#' @title Individual Test for TVG and SVG
-#' @param Y The numeric matrix with n spots (row) and k genes (column)
-#' @param covariates Covariates X as fixed effect
-#' @param kernel_mat_list A list of kernel matrix, as random effect. kernel_S, kernel_T and kernel_error
-#' @import MM4LMM
-#' @importFrom MM4LMM MMEst
-Test2 <- function(object, gene, K_test, lineage = 'lineage1', cores = 1){
-  KList =  object@kernel[[lineage]][setdiff(names(object@kernel[[lineage]]), K_test)]
-  K_alt = object@kernel[[lineage]][[K_test]]
-  Y = object@gene_expression
-  Y = Y[gene,colnames(Y)[match(rownames(K_alt),colnames(Y))]]
-  n = length(Y)
-  if(!is.null(object@covariates )){
-    X <- object@covariates
-  }else{
-    X <- matrix(1, n, 1)
-  }
-
-  ## parameter estimation
-  ResultVA <- MMEst(Y=Y , Cofactor = X, VarList = KList, NbCores=cores)
-  ## if directly use estimation (may try extract info from algo )
-  V_l <-  0
-  for(i in seq_along(KList)){
-    V_l <- V_l +  ResultVA$NullModel$Sigma2[i] * KList[[i]]
-  }
-  V_l_inv <- invert(V_l)
-  P_l <- V_l_inv - V_l_inv%*%X%*% invert(t(X)%*%V_l_inv%*%X) %*%t(X)%*%V_l_inv
-
-  # beta <- ResultVA$NullModel$Beta
-  # Q <- t(Y-X%*%beta)%*%V_l_inv%*%K_alt%*%V_l_inv%*%(Y-X%*%beta)/2
-  Q <- (t(Y) %*% P_l %*% K_alt %*% P_l%*% Y )/2
-  e <- TT(P_l, K_alt)/2
-
-  num_VC = length(KList) #number of VC in Null model
-  Ill_values <- c()
-  for(i in seq_along(KList)){
-    for(j in seq_along(KList)){
-      Ill_values <- c(Ill_values, TT(P_l %*% KList[[i]], P_l %*% KList[[j]]  ))
-    }
-  }
-
-  I_l_l <- matrix(Ill_values ,nrow = num_VC ,ncol = num_VC, byrow = TRUE )/2
-  Il_l <- matrix(unlist(lapply(KList, function(K){TT(P_l %*% K_alt, P_l %*% K )}))
-                 ,nrow = 1 ,ncol = num_VC, byrow = TRUE)/2
-  Ill <- TT(P_l %*% K_alt, P_l %*% K_alt )/2
-  Itt <- Ill-Il_l%*%pinv(I_l_l)%*%t(Il_l) #Ill_tilde
-  k <- Itt/e/2; v=2*e^2/Itt
-  pvalue <- pchisq(Q/k, df=v, lower.tail=F)
-
-  out <- list(gene = gene,VCs=ResultVA$NullModel$Sigma2, #Beta=beta, #restricted.logLik=lR, fisher.info=Iss/2, itr_num = ResultVA$NullModel$NbIt
-              Score=Q, df=v, scale=k, p.value=pvalue)
-  return(out)
-}
-
-
-#' @title Run Test2 for selected genes for one lineage
-#' @param genes The genes to test for Test2
-run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE, DP_genes = NULL){
-  meta_df <- na.omit(object@meta_df[,c('x','y',lineage)])
-  Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(meta_df), colnames(object@gene_expression))],drop = FALSE]
-
-  res_list <- list()
-  for(K_test_name in c( 'kernel_S', 'kernel_T')){
-    res <- lapply(genes, function(gene){
-
-      if(LOO & K_test_name == 'kernel_T' & gene %in% DP_genes){
-        ## get a new t for DP genes
-        signature_genes <- setdiff(object@signature_genes, gene)
-        embedding <- prcomp_irlba(t(Y[signature_genes,]), scale. = TRUE, n = npcs)$x
-        ##'slingshot'
-        sim <- SingleCellExperiment(assays = Y,
-                                    reducedDims = SimpleList(PCA = embedding),
-                                    colData = DataFrame(clusterlabel = rep("0", ncol(Y)) )
-        )
-        sim  <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA',start.clus="0" )
-        loc_df[,'lineage1'] = sim@colData@listData$slingPseudotime_1
-
-        object <- CreateTessaObject(counts = Y[gene,,drop =FALSE ], meta_df = loc_df,
-                                    signature_genes =  signature_genes,
-                                    covariates = object@covariates, normalized = object@normalized )
-        object <- build_kernelMatrix(Tessa.obj)
-        Test2(object = object, gene = gene, K_test = K_test_name ,lineage = 'lineage1')
-      }else{
-        Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
-      }
-    })
-    res_list[[K_test_name]] <- unlist(lapply(res, function(x){x$p.value}))
-  }
-  res_df <- res_list %>% bind_cols() %>% mutate(geneid = genes) %>%
-    rename('kernel_T' = 'TVG_pvs', 'kernel_S' = 'SVG_pvs') %>%
-    mutate(TVG_pvs_adj = p.adjust(TVG_pvs, method = 'BY'),
-           SVG_pvs_adj = p.adjust(SVG_pvs, method = 'BY'))
-  object@result[[lineage]][['Test2']] <- res_df[,c('geneid', 'TVG_pvs', 'TVG_pvs_adj', 'SVG_pvs', 'SVG_pvs_adj')]
-  object
-}
-
-#' @title Run Test1 for all lineages
-#' @param obejct  The TESSA object
-#' @param genes The genes to do Test2. If NULL, then test all the uTSVGs
-#' @param pv_threshold The pvalue threshold for test1, to get the uTSVGs that are significant in Test1
-#' @param LOO If TRUE, run LOO double dipping correction for Test2
+#' @title Retrieve Test2 result for one or all lineages
+#' @param obejct A TESSA object
+#' @param lineage Name of lineage
+#' @return A dataframe of Test1 result
 #' @export
-run_Test2 = function(object, genes = NULL, pv_threshold = 0.05, LOO = FALSE){
-
-  if(LOO){
-    DP_genes <- intersect(genes, object@signature_genes)
+get_Test2_result = function(object, lineage = NULL){
+  if(!is.null(lineage)){
+    result = object@result[[lineage]]$Test2
   }else{
-    DP_genes = NULL
+    result =lapply(names(object@result), function(lineage){
+      df = object@result[[lineage]]$Test2
+      df$lineage = lineage
+      df
+    }) %>% bind_rows()
   }
-
-  t_vars = str_subset( colnames(meta_df),'lineage')
-  for(lineage in t_vars){
-    if(is.null(genes)){
-      test1_res <- object@result[[lineage]]$Test1
-      if('pvs_adj_LOO' %in% colnames(test1_res)){
-        genes <- test1_res$geneid[test1_res$pvs_adj_LOO < pv_threshold ]
-      }else{
-        genes <- test1_res$geneid[test1_res$pvs_adj < pv_threshold ]
-      }
-    }
-    object <- run_Test2_lineage(object, lineage = lineage, genes = genes, LOO = LOO, DP_genes = DP_genes)
-  }
-  object
-
+  result
 }
-
 
 

@@ -11,3 +11,17 @@ This command should automatically install all required packages if they are not 
 
 ## Quick Start
 <!-- See [Tutorial](https://lulushang.org/Celina_Tutorial/index.html) for detailed documentation and examples. -->
+
+
+<!-- build_kernelMatrix <- function(object, bw = NULL){
+  ## bandwidth selection
+  counts <- object@gene_expression
+  bw_vector <- apply(counts, MARGIN = 1, stats::bw.nrd)
+  object@bandwidth <- mean(na.omit(bw_vector))
+  ## construct kernel matrix for each lineage
+  t_vars <- str_subset( colnames(object@meta_df),'lineage')
+  for(t_var in t_vars ){
+    object <- build_kernelMatrix_lineage(object, lineage = t_var, bw = object@bandwidth )
+  }
+  object
+} -->

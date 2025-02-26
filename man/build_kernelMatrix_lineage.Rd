@@ -4,24 +4,18 @@
 \alias{build_kernelMatrix_lineage}
 \title{Build the Gaussian kernel matrix for one lineage}
 \usage{
-build_kernelMatrix_lineage(object, lineage = "lineage1", bw = NULL)
+build_kernelMatrix_lineage(object, lineage = "lineage1", bw)
 }
 \arguments{
 \item{object}{The Tessa object.}
 
 \item{lineage}{The name of the lineage to use}
 
-\item{bw}{The bandwidth, default is NULL}
+\item{bw}{The numeric bandwidth}
 }
 \value{
 The Tessa object with the Gaussian kernel matrix.
 }
 \description{
-Build the Gaussian kernel matrix to model correlation between spots.
-The Gaussian kernel bandwidth will be selected automatically:
-for datasets with 5000 spots or fewer,
-non-parametric Sheather-Jones' bandwidths are computed for each gene,
-and the median of these values is used as the common bandwidth;
-for datasets with more than 5000 spots, Silverman's bandwidths are computed for each gene,
-and the median of these gene-specific bandwidths is used as the common bandwidth.
+Build the Gaussian kernel matrix for one lineage
 }

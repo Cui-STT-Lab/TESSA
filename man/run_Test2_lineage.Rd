@@ -9,12 +9,21 @@ run_Test2_lineage(
   lineage = "lineage1",
   genes = NULL,
   LOO = FALSE,
-  DP_genes = NULL
+  npcs = 30,
+  num_cores = 1,
+  parallel = FALSE
 )
 }
 \arguments{
-\item{genes}{The genes to test for Test2
-slingshot'}
+\item{genes}{The genes to do Test2. If NULL, then test all the uTSVGs}
+
+\item{LOO}{If TRUE, run LOO double dipping correction for Test2}
+
+\item{npcs}{The PC number to use in slingshot pseudotime estimation}
+
+\item{obejct}{The TESSA object}
+
+\item{pv_threshold}{The pvalue threshold for test1, to get the uTSVGs that are significant in Test1}
 }
 \description{
 Run Test2 for selected genes for one lineage

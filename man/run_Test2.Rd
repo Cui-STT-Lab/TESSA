@@ -2,9 +2,9 @@
 % Please edit documentation in R/TESSA.R
 \name{run_Test2}
 \alias{run_Test2}
-\title{Run Test1 for all lineages}
+\title{Run Test2 for all lineages}
 \usage{
-run_Test2(object, genes = NULL, pv_threshold = 0.05, LOO = FALSE)
+run_Test2(object, genes = NULL, pv_threshold = 0.05, LOO = TRUE)
 }
 \arguments{
 \item{genes}{The genes to do Test2. If NULL, then test all the uTSVGs}
@@ -16,5 +16,5 @@ run_Test2(object, genes = NULL, pv_threshold = 0.05, LOO = FALSE)
 \item{obejct}{The TESSA object}
 }
 \description{
-Run Test1 for all lineages
+Run Test2 for all lineages
 }
