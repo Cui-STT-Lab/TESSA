@@ -4,7 +4,7 @@
 \alias{Test2}
 \title{Individual Test for TVG and SVG}
 \usage{
-Test2(object, gene, K_test, lineage = "lineage1", num_cores = 1)
+Test2(object, gene, K_test, lineage = "lineage1")
 }
 \arguments{
 \item{Y}{The numeric matrix with n spots (row) and k genes (column)}

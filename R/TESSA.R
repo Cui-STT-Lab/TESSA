@@ -470,7 +470,7 @@ TT <- function(M1, M2){
 #' @param kernel_mat_list A list of kernel matrix, as random effect. kernel_S, kernel_T and kernel_error
 #' @import gaston
 #' @importFrom gaston lmm.aireml
-Test2 <- function(object, gene, K_test, lineage = 'lineage1', num_cores = 1){
+Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
   KList = object@kernel[[lineage]][setdiff(names(object@kernel[[lineage]]), c(K_test, 'kernel_error'))]
   K_alt = object@kernel[[lineage]][[K_test]]
   Y = object@gene_expression
@@ -505,7 +505,7 @@ Test2 <- function(object, gene, K_test, lineage = 'lineage1', num_cores = 1){
       Ill_values <- c(Ill_values, TT(P_l %*% KList[[i]], P_l %*% KList[[j]]  ))
     }
   }
-
+  rm(model.l)
   I_l_l <- matrix(Ill_values ,nrow = num_VC ,ncol = num_VC, byrow = TRUE )/2
   Il_l <- matrix(unlist(lapply(KList, function(K){TT(P_l %*% K_alt, P_l %*% K )}))
                  ,nrow = 1 ,ncol = num_VC, byrow = TRUE)/2
@@ -552,10 +552,6 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
     }
   }
 
-  # # #!test
-  # genes <- genes[1:20]
-  # print(genes)
-  # # #!test
   res_list <- list()
   for(K_test_name in c( 'kernel_S', 'kernel_T')){
     if(parallel){
@@ -575,8 +571,9 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
           object_loo <- CreateTessaObject(counts = Y[gene,,drop = FALSE ], meta_df = loc_df,
                                           signature_genes =  signature_genes,
                                           covariates = object@covariates, normalized = object@normalized )
-          object <- build_kernelMatrix(object_loo, bw = object@bandwidth)
-          test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+          object_loo <- build_kernelMatrix(object_loo, bw = object@bandwidth)
+          rm(embedding,sim,loc_df,signature_genes)
+          test2_out <- Test2(object = object_loo, gene = gene, K_test = K_test_name ,lineage = lineage)
         }else{
           test2_out <-Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
         }
@@ -640,16 +637,26 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
       })
     }
     # print(str(res))
-
-    res_list[[K_test_name]] <- unlist(lapply(res, function(x){x$p.value}))
+    res <-  cbind( unlist(lapply(res, function(x){ x$p.value})),
+                                      unlist(lapply(res, function(x){ x$gene})) )   
+    colnames(res) <-  c(K_test_name, 'geneid')                              
+    res_list[[K_test_name]] <- res 
   }
-  # print(str(res_list %>% bind_cols()))
-  res_df <- res_list %>% bind_cols() %>% mutate(geneid = genes) %>%
+  
+  res_df <- full_join(data.frame(res_list [[1]]),data.frame(res_list[[2]]), by = "geneid")  %>% 
     rename('kernel_T' = 'TVG_pvs', 'kernel_S' = 'SVG_pvs') %>%
     mutate(TVG_pvs_adj = p.adjust(TVG_pvs, method = 'BY'),
            SVG_pvs_adj = p.adjust(SVG_pvs, method = 'BY'))
   object@result[[lineage]][['Test2']] <- res_df[,c('geneid', 'TVG_pvs', 'TVG_pvs_adj', 'SVG_pvs', 'SVG_pvs_adj')]
   object
+  # res_list[['geneid']] <- genes
+  # # res_list %>% bind_cols()
+  # res_df <- res_list %>% bind_cols() %>% #mutate(geneid = genes) %>%
+  #   rename('kernel_T' = 'TVG_pvs', 'kernel_S' = 'SVG_pvs') %>%
+  #   mutate(TVG_pvs_adj = p.adjust(TVG_pvs, method = 'BY'),
+  #          SVG_pvs_adj = p.adjust(SVG_pvs, method = 'BY'))
+  # object@result[[lineage]][['Test2']] <- res_df[,c('geneid', 'TVG_pvs', 'TVG_pvs_adj', 'SVG_pvs', 'SVG_pvs_adj')]
+  # object
 }
 
 #' @title Run Test2 for all lineages
