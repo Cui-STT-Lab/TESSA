@@ -156,7 +156,12 @@ data_preprocess <- function(object, spot.threshold = 10, gene.threshold = 0.1,
                             normalized = NULL){
   counts <- object@gene_expression
   meta_df <- object@meta_df
-
+  
+  if(!('Sample_ID' %in% colnames(meta_df))){
+    cat("Sample_ID is missing, assign all spots to sample1.\n")
+    meta_df$Sample_ID = 'sample1'
+  }
+  
   if(!is.null(normalized)){
     object@normalized = normalized
   }

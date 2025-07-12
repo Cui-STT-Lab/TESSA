@@ -9,22 +9,52 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+```{r, show = F}
+library(TESSA)
+library(ggplot2)
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
+## Load data
+```{r}
+load('./data/PDAC_S2A.rda')
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+## Create TessaObject 
+
+```{r}
+mklist <- list(
+  'NormalDuctal' = c('KRT19', 'EPCAM', 'GATA6', 'CFTR', 'MUC1', 'KRT7', 'CDH1', 'HNF1A', 'FOXA2'),
+  'TumorDuctal' = c('KRT19', 'MUC1', 'MUC5AC', 'CEACAM6', 'S100P', 'SOX9', 'ZEB1', 'SNAI2', 'TP63', 'FN1', 'CD44', 'VIM','TFF1','TFF2'),
+  'StromaCAF' = c('COL1A1', 'FN1', 'SPARC', 'ACTA2', 'PDGFRB', 'POSTN', 'LOXL2', 'MMP2', 'MMP9', 'FAP', 'TGFB1', 'CXCL12', 'CCL2')
+)
+mkgenes = unique(unlist(mklist))
+str(mkgenes) 
+
+
+```
+
+
+We used sample S2A from the PDAC dataset as a main example. The required input is a raw count matrix `counts`, a metadata dataframe including spatial coordinates and estimated pseudotime `meta_df` and signature genes used to estimate pseudotime `mkgenes`. Firstly, We preprocess the data by filtering out low quality spots with less than 10 genes detected and genes that expressed in less than 10% of the spots by `data_preprocess()`. Secondly, we construct spatial and pseudotime kernels by `build_kernelMatrix`. 
+
+```{r}
+Tessa.obj =  CreateTessaObject(counts = counts, meta_df = meta_df,
+                               signature_genes = mkgenes,
+                               covariates = NULL, normalized = FALSE)
+Tessa.obj = data_preprocess(object = Tessa.obj, spot.threshold = 10, gene.threshold = 0.1)
+Tessa.obj = build_kernelMatrix(Tessa.obj, method = ')
+
+```
+
+## TESSA Stage 1 Test 
+
+We first run stage 1 overall test by `run_Test1()` to identify unified TSVGs (uTSVGs), refers to genes exhibits either temporal and spatial patterns. uTSVGs detection is a feature selection step serves for downstream domain detection.
+
+```{r}
+## set npcs to a rational number automatically later
+Tessa.obj <-  run_Test1(Tessa.obj, LOO = TRUE, parallel = TRUE acc = 1e-60,npcs = 10 )  
+```
+
+
+
