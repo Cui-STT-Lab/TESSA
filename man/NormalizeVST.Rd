@@ -4,7 +4,7 @@
 \alias{NormalizeVST}
 \title{Anscombe variance stabilizing transformation: NB}
 \usage{
-NormalizeVST(counts, sv = 1)
+NormalizeVST(counts, sv = 1, Sample_ID = NULL)
 }
 \arguments{
 \item{counts}{gene expression count matrix}

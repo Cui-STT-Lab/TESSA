@@ -22,7 +22,8 @@
 #' @export
 setClass("Tessa", slots = list(
   gene_expression = "matrix",
-  meta_df = "matrix",
+  # meta_df = "matrix",
+  meta_df = "data.frame",
   covariates = "ANY",
   kernel = "list",
   bandwidth = "numeric",
@@ -76,7 +77,7 @@ CreateTessaObject <- function(counts, normalized = FALSE, meta_df, covariates = 
     })
   }
 
-  meta_df = as.matrix(meta_df)
+  # meta_df = as.matrix(meta_df)
   genes <- rownames(counts)
   if(is.null(genes)) {
     stop('\'rownames(counts)\' is null!')
@@ -117,7 +118,7 @@ CreateTessaObject <- function(counts, normalized = FALSE, meta_df, covariates = 
 #' Anscombe variance stabilizing transformation: NB
 #' @param counts gene expression count matrix
 #' @param sv normalization parameter
-NormalizeVST <- function(counts, sv = 1) {
+NormalizeVST <- function(counts, sv = 1,Sample_ID = NULL) {
   varx = apply(counts, 1, var)
   meanx = apply(counts, 1, mean)
   phi = coef(nls(varx ~ meanx + phi * meanx^2, start = list(phi = sv)))
@@ -125,8 +126,11 @@ NormalizeVST <- function(counts, sv = 1) {
   ## regress out log total counts
   norm_counts <- log(counts + 1/(2 * phi))
   total_counts <- apply(counts, 2, sum)
-  res_norm_counts <- t(apply(norm_counts, 1, function(x){resid(lm(x ~ log(total_counts)))} ))
-
+  if(is.null(Sample_ID) | length(unique(Sample_ID)) == 1){
+    res_norm_counts <- t(apply(norm_counts, 1, function(x){resid(lm(x ~ log(total_counts)))} ))
+  }else{
+    res_norm_counts <- t(apply(norm_counts, 1, function(x){resid(lm(x ~ log(total_counts) + factor(Sample_ID)))} ))
+  }
   return(res_norm_counts)
 }# end func
 
@@ -198,7 +202,7 @@ data_preprocess <- function(object, spot.threshold = 10, gene.threshold = 0.1,
   ## Normalize count data
   if (!object@normalized ) {
     cat('Normalizing the count data...\n')
-    counts.normalized <- NormalizeVST(counts.use,sv = 1)
+    counts.normalized <- NormalizeVST(counts.use,sv = 1,Sample_ID = meta_df$Sample_ID)
     object@normalized <- TRUE
   }
 
@@ -233,15 +237,39 @@ gaussian_distance_normalized_kernel = function(X = NULL,sigma = NULL){
 #' @param lineage The name of the lineage to use
 #' @param bw The numeric bandwidth
 #' @return The Tessa object with the Gaussian kernel matrix.
+#' @importFrom Matrix bdiag
 #' @export
 build_kernelMatrix_lineage <- function(object,lineage='lineage1', bw){
-  meta_df <- na.omit(object@meta_df[,c('x','y',lineage)])
-  counts <- object@gene_expression
-  counts <- counts[,colnames(counts)[match(rownames(meta_df), colnames(counts))],drop = FALSE]
-  m <- ncol(counts)
-  ## Gaussian kernel, with min-max normalized distance
-  KK_S <- gaussian_distance_normalized_kernel(X = meta_df[,c('x','y')], sigma = bw) + diag(rep(1e-9, m ))
+  # if('Sample_ID' %in% colnames(object@meta_df)){
+    # build multiple sample kernel 
+    meta_df <- na.omit(object@meta_df[,c('x','y',lineage,'Sample_ID')])
+    counts <- object@gene_expression
+    counts <- counts[,colnames(counts)[match(rownames(meta_df), colnames(counts))],drop = FALSE]
+    m <- ncol(counts)
+
+      KK_S_list <- list()
+      colnames_KK_S_list <- list()
+      for(sample in unique(meta_df$Sample_ID)){
+        meta_df_sub <- meta_df[meta_df$Sample_ID == sample,]
+        counts_sub <- counts[,colnames(counts)[match(rownames(meta_df_sub), colnames(counts))],drop = FALSE]
+        m_sub <- ncol(counts_sub)
+        ## Gaussian kernel, with min-max normalized distance
+        KK_S_list[[sample]] <- gaussian_distance_normalized_kernel(X = meta_df_sub[,c('x','y')], sigma = bw) + diag(rep(1e-9, m_sub ))
+        colnames_KK_S_list[[sample]] <- colnames(KK_S_list[[sample]])
+      }
+      KK_S <- as.matrix(Matrix::bdiag(KK_S_list))
+      colnames(KK_S) <- rownames(KK_S) <- unlist(colnames_KK_S_list)
+  # }else{
+    # meta_df <- na.omit(object@meta_df[,c('x','y',lineage)])
+    # counts <- object@gene_expression
+    # counts <- counts[,colnames(counts)[match(rownames(meta_df), colnames(counts))],drop = FALSE]
+    # m <- ncol(counts)
+    # ## Gaussian kernel, with min-max normalized distance
+    # KK_S <- gaussian_distance_normalized_kernel(X = meta_df[,c('x','y')], sigma = bw) + diag(rep(1e-9, m ))
+  # }
   KK_T <- gaussian_distance_normalized_kernel(X = meta_df[,lineage], sigma = bw)  + diag(rep(1e-9, m ))
+  colnames(KK_T) <- rownames(KK_T) <- rownames(meta_df)
+  KK_S <- KK_S[rownames(KK_T),colnames(KK_T)]
   object@kernel[[lineage]] <- list(kernel_S = KK_S, kernel_T = KK_T, kernel_error = diag(rep(1,ncol(counts))))
   return(object)
 }
@@ -252,23 +280,50 @@ build_kernelMatrix_lineage <- function(object,lineage='lineage1', bw){
 #' @param object The Tessa object.
 #' @param method The method of bandwidth selection, default is NULL
 #' @return The Tessa object with the Gaussian kernel matrix.
+#' @importFrom stringr str_subset
+#' @importFrom stats bw.SJ bw.nrd
 #' @export
 build_kernelMatrix <- function(object, method = NULL, bw = NULL){
   ## bandwidth selection
-  counts <- object@gene_expression
+  # counts <- object@gene_expression
+  # if(!is.null(bw)){
+  #   object@bandwidth <- bw
+  # }else{
+  #   if(is.null(method)){
+  #     method = ifelse(ncol(counts) < 5000, 'SJ', 'nrd')
+  #   }
+  #   if(method == 'SJ'){
+  #     bw_vector <- apply(counts, MARGIN = 1, stats::bw.SJ)
+  #     object@bandwidth <- median(na.omit(bw_vector))
+  #   }else{
+  #     bw_vector <- apply(counts, MARGIN = 1, stats::bw.nrd)
+  #     object@bandwidth <- median(na.omit(bw_vector))
+  #   }
+  # }
   if(!is.null(bw)){
     object@bandwidth <- bw
   }else{
+    counts <- object@gene_expression
     if(is.null(method)){
-      method = ifelse(ncol(counts) < 5000, 'SJ', 'nrd')
+        method = ifelse(mean(table(object@meta_df$Sample_ID)) < 5000, 'SJ', 'nrd')
     }
-    if(method == 'SJ'){
-      bw_vector <- apply(counts, MARGIN = 1, stats::bw.SJ)
-      object@bandwidth <- median(na.omit(bw_vector))
-    }else{
-      bw_vector <- apply(counts, MARGIN = 1, stats::bw.nrd)
-      object@bandwidth <- median(na.omit(bw_vector))
+    bw_vector <- c()
+    for(sample in unique(object@meta_df$Sample_ID)){
+      counts_sub <- counts[,colnames(counts)[match(rownames(object@meta_df[object@meta_df$Sample_ID == sample,]), colnames(counts))],drop = FALSE]
+      if(method == 'SJ'){
+        tmp <- apply(counts_sub, MARGIN = 1, function(x) {
+          tryCatch({
+            stats::bw.SJ(x)  # Attempt to compute bandwidth
+          }, error = function(e) {
+            NA  # If an error occurs, return NA
+          })
+        })
+        bw_vector <- c(bw_vector, na.omit(tmp))
+      }else {
+        bw_vector <- c(bw_vector,  apply(counts_sub, MARGIN = 1, stats::bw.nrd))
+      }
     }
+    object@bandwidth <- median(na.omit(bw_vector))
   }
 
   ## construct kernel matrix for each lineage
@@ -309,7 +364,6 @@ Test1 = function(Y, covariates = NULL, kernel_mat_list, acc = 1e-7){
   ## eigen
   zeros_threshold <- 1e-4
   # phis <- getEigenValues(PVP)
-  # print('eigen')
   phis <- Re(eigen(PVP, only.values = TRUE)$values)
   phis[phis<zeros_threshold] <- 0.0
   ## calculate k = rank(PVP)
@@ -325,7 +379,6 @@ Test1 = function(Y, covariates = NULL, kernel_mat_list, acc = 1e-7){
   ### calculate dnonimators
   denonimators <- apply((Y - (covariates %*% Xdagger %*% Y)) * Y, 2, sum)
   scores <- nominators / denonimators * (n - num_cov)
-
   ## define pvlaues
   pvals <- rep(0,length(scores))
   for(i in seq_len(length(scores))){
@@ -376,7 +429,7 @@ run_Test1_lineage = function(object, lineage = 'lineage1',acc = 1e-7 ){
 #' @importFrom S4Vectors SimpleList
 #' @export
 run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc = 1e-7,npcs = 30 ){
-  loc_df <- na.omit(object@meta_df[,c('x','y',lineage)])
+  loc_df <- na.omit(object@meta_df[,c('x','y',lineage,'Sample_ID')])
   Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(loc_df), colnames(object@gene_expression))], drop = FALSE]
 
   if(!object@normalized) {
@@ -393,7 +446,7 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
   sim  <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA',start.clus="0" )
   loc_df[,lineage] = sim@colData@listData$slingPseudotime_1
 
-
+  print('here')
   ## replaced by new pseudotime
   object_loo <- CreateTessaObject(counts = Y[gene,,drop =FALSE ], meta_df = loc_df,
                                   signature_genes =  signature_genes,
@@ -417,15 +470,21 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
 #' @importFrom parallel parLapply
 #' @importFrom pracma pinv
 #' @importFrom CompQuadForm davies liu
+#' @importFrom stringr str_subset
 #' @export
 run_Test1 = function(object, LOO = FALSE, num_cores = 1,LOO_pv_threshold = 0.05, npcs = 30, acc = 1e-15,parallel = FALSE ){ #, kernel_names = c('kernel_S','kernel_T', 'kernel_error')
-  t_vars = str_subset( colnames(object@meta_df),'lineage')
-  for(lineage in t_vars){
-    object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
-    test_res <- object@result[[lineage]]$Test1
-    DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
-    object@result[[lineage]]$DP_genes = DP_genes
-    if(LOO){
+  res <- get_Test1_result(Tessa.obj)
+  if('pvs_adj' %in% colnames(res) & "pvs_adj_LOO" %in% colnames(res)){
+    warning('pvs_adj_LOO already exists, please check the result slot of Tessa object')
+    return(object)
+  }else if('pvs_adj' %in% colnames(res) & !("pvs_adj_LOO" %in% colnames(res)) & LOO){
+    t_vars = str_subset( colnames(object@meta_df),'lineage')
+    for(lineage in t_vars){
+      # object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
+      test_res <- object@result[[lineage]]$Test1
+      DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
+      object@result[[lineage]]$DP_genes = DP_genes
+
       if(parallel){
         cl <- makeCluster(num_cores)
         DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
@@ -434,6 +493,7 @@ run_Test1 = function(object, LOO = FALSE, num_cores = 1,LOO_pv_threshold = 0.05,
         stopCluster(cl)
       }else{
         DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
+          print(gene)
           run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
         }))
       }
@@ -442,8 +502,36 @@ run_Test1 = function(object, LOO = FALSE, num_cores = 1,LOO_pv_threshold = 0.05,
       test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
       object@result[[lineage]]$Test1 <- test_res
     }
+    return(object)
+  }else{
+    t_vars = str_subset( colnames(object@meta_df),'lineage')
+    for(lineage in t_vars){
+      object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
+      test_res <- object@result[[lineage]]$Test1
+      DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
+      object@result[[lineage]]$DP_genes = DP_genes
+
+      if(LOO){
+        if(parallel){
+          cl <- makeCluster(num_cores)
+          DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
+            run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
+          },object, lineage, npcs))
+          stopCluster(cl)
+        }else{
+          DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
+            print(gene)
+            run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
+          }))
+        }
+        test_res$pvs_LOO <- test_res$pvs
+        test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
+        test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
+        object@result[[lineage]]$Test1 <- test_res
+      }
+    }
+    return(object)
   }
-  object
 }
 
 #' @title a faster version of trace of matrix multiplication
@@ -528,7 +616,7 @@ Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
 #' @importFrom parallel parLapply parLapplyLB
 #' @export
 run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE,npcs = 30,num_cores = 1, parallel = FALSE){
-  meta_df <- na.omit(object@meta_df[,c('x','y',lineage)])
+  meta_df <- na.omit(object@meta_df[,c('x','y',lineage,'Sample_ID')])
   Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(meta_df), colnames(object@gene_expression))],drop = FALSE]
 
   if(!is.null(genes)){
@@ -683,6 +771,8 @@ run_Test2 = function(object, genes = NULL, pv_threshold = 0.05, LOO = TRUE){
 #' @param obejct A TESSA object
 #' @param lineage Name of lineage
 #' @return A dataframe of Test1 result
+#' @import dplyr
+#' @importFrom dplyr bind_rows
 #' @export
 get_Test1_result = function(object, lineage = NULL){
   if(!is.null(lineage)){
@@ -717,3 +807,28 @@ get_Test2_result = function(object, lineage = NULL){
 }
 
 
+#' @title Retrieve topK uTSVGs for each lineage
+#' @param Tessa.obj A TESSA object
+#' @param topK If NULL, return all uTSVGs; otherwise, return topK uTSVGs of each lineage
+#' @return A list of uTSVGs of each lineage
+#' @export
+get_Test1_topK_genes = function(Tessa.obj, topK = NULL){
+    t_vars = str_subset( colnames(Tessa.obj@meta_df),'lineage')
+    uTSVGs <- lapply(t_vars,function(lineage){
+        Test1_result <- get_Test1_result(Tessa.obj, lineage = lineage) 
+        if('pvs_adj_LOO' %in% colnames(Test1_result)){
+            Test1_result <- Test1_result %>% filter(pvs_adj_LOO < 0.05) %>% arrange(pvs_adj_LOO)
+        }else{
+            Test1_result <- Test1_result %>% filter(pvs_adj < 0.05) %>% arrange(pvs_adj)
+        }
+    
+        if(is.null(topK)){
+            sig_genes <- Test1_result$geneid
+        }else{
+            sig_genes <- Test1_result$geneid[1:topK]
+        }
+        sig_genes
+    })
+    names(uTSVGs) <- t_vars
+    uTSVGs
+}

@@ -16,7 +16,7 @@ Imports:
         slingshot,
         irlba,
         SingleCellExperiment,
-        MM4LMM
+        gaston,
 LinkingTo: 
     Rcpp,
     RcppArmadillo
