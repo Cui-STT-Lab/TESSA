@@ -4,15 +4,7 @@
 \alias{run_Test1}
 \title{Run Test1 for all genes, all lineages}
 \usage{
-run_Test1(
-  object,
-  LOO = FALSE,
-  num_cores = 1,
-  LOO_pv_threshold = 0.05,
-  npcs = 30,
-  acc = 1e-15,
-  parallel = FALSE
-)
+run_Test1(object, LOO = FALSE, LOO_pv_threshold = 0.05, npcs = 10, acc = 1e-15)
 }
 \arguments{
 \item{object}{The TESSA object}

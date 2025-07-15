@@ -289,22 +289,6 @@ build_kernelMatrix_lineage <- function(object,lineage='lineage1', bw){
 #' @importFrom stats bw.SJ bw.nrd
 #' @export
 build_kernelMatrix <- function(object, method = NULL, bw = NULL){
-  ## bandwidth selection
-  # counts <- object@gene_expression
-  # if(!is.null(bw)){
-  #   object@bandwidth <- bw
-  # }else{
-  #   if(is.null(method)){
-  #     method = ifelse(ncol(counts) < 5000, 'SJ', 'nrd')
-  #   }
-  #   if(method == 'SJ'){
-  #     bw_vector <- apply(counts, MARGIN = 1, stats::bw.SJ)
-  #     object@bandwidth <- median(na.omit(bw_vector))
-  #   }else{
-  #     bw_vector <- apply(counts, MARGIN = 1, stats::bw.nrd)
-  #     object@bandwidth <- median(na.omit(bw_vector))
-  #   }
-  # }
   if(!is.null(bw)){
     object@bandwidth <- bw
   }else{
@@ -433,7 +417,7 @@ run_Test1_lineage = function(object, lineage = 'lineage1',acc = 1e-7 ){
 #' @importFrom SingleCellExperiment SingleCellExperiment colData
 #' @importFrom S4Vectors SimpleList
 #' @export
-run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc = 1e-7,npcs = 30 ){
+run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc = 1e-15,npcs = 10 ){
   loc_df <- na.omit(object@meta_df[,c('x','y',lineage,'Sample_ID')])
   Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(loc_df), colnames(object@gene_expression))], drop = FALSE]
 
@@ -451,7 +435,6 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
   sim  <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA',start.clus="0" )
   loc_df[,lineage] = sim@colData@listData$slingPseudotime_1
 
-  print('here')
   ## replaced by new pseudotime
   object_loo <- CreateTessaObject(counts = Y[gene,,drop =FALSE ], meta_df = loc_df,
                                   signature_genes =  signature_genes,
@@ -459,8 +442,6 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
 
   object_loo <- build_kernelMatrix(object_loo,  bw = object@bandwidth)
   object_loo <- run_Test1_lineage(object_loo, lineage = lineage,acc = acc )
-  # tmp <- 'here'
-  # return(tmp)
   pv <- object_loo@result[[lineage]]$Test1$pvs[1]
   pv
 }
@@ -471,73 +452,115 @@ run_Test1_lineage_LOO_pergene = function(object, gene, lineage = 'lineage1', acc
 #' @param acc If pvalue has too many zeros, decrease this number to adjust the lower limit of pvalue
 #' @param npcs The PC number to use in slingshot pseudotime estimation
 #' @return The TESSA object
-#' @import pracma CompQuadForm parallel
-#' @importFrom parallel parLapply
+#' @import pracma CompQuadForm 
 #' @importFrom pracma pinv
 #' @importFrom CompQuadForm davies liu
 #' @importFrom stringr str_subset
 #' @export
-run_Test1 = function(object, LOO = FALSE, num_cores = 1,LOO_pv_threshold = 0.05, npcs = 30, acc = 1e-15,parallel = FALSE ){ #, kernel_names = c('kernel_S','kernel_T', 'kernel_error')
-  res <- get_Test1_result(Tessa.obj)
+run_Test1 = function(object, LOO = FALSE, LOO_pv_threshold = 0.05, npcs = 10, acc = 1e-15 ){ #, kernel_names = c('kernel_S','kernel_T', 'kernel_error')
+  if (npcs >= length(object@signature_genes) ){
+    npcs = length(object@signature_genes) - 2
+    cat('number of PCs is larger than the number of signature genes, reduce the number of PCs to', npcs,'\n')
+  }
+  res <- get_Test1_result(object)
   if('pvs_adj' %in% colnames(res) & "pvs_adj_LOO" %in% colnames(res)){
     warning('pvs_adj_LOO already exists, please check the result slot of Tessa object')
     return(object)
-  }else if('pvs_adj' %in% colnames(res) & !("pvs_adj_LOO" %in% colnames(res)) & LOO){
-    t_vars = str_subset( colnames(object@meta_df),'lineage')
-    for(lineage in t_vars){
-      # object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
-      test_res <- object@result[[lineage]]$Test1
-      DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
-      object@result[[lineage]]$DP_genes = DP_genes
-
-      if(parallel){
-        cl <- makeCluster(num_cores)
-        DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
-          run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
-        },object, lineage, npcs))
-        stopCluster(cl)
-      }else{
-        DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
-          print(gene)
-          run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
-        }))
-      }
-      test_res$pvs_LOO <- test_res$pvs
-      test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
-      test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
-      object@result[[lineage]]$Test1 <- test_res
-    }
-    return(object)
-  }else{
-    t_vars = str_subset( colnames(object@meta_df),'lineage')
-    for(lineage in t_vars){
-      object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
-      test_res <- object@result[[lineage]]$Test1
-      DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
-      object@result[[lineage]]$DP_genes = DP_genes
-
-      if(LOO){
-        if(parallel){
-          cl <- makeCluster(num_cores)
-          DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
-            run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
-          },object, lineage, npcs))
-          stopCluster(cl)
-        }else{
-          DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
-            print(gene)
-            run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs)
-          }))
-        }
-        test_res$pvs_LOO <- test_res$pvs
-        test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
-        test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
-        object@result[[lineage]]$Test1 <- test_res
-      }
-    }
-    return(object)
   }
+  
+  t_vars = str_subset( colnames(object@meta_df),'lineage')
+  for(lineage in t_vars){
+    cat('Identifying uTSVGs for ', lineage ,' ...','\n')
+    if(!('pvs_adj' %in% colnames(res))){
+      object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
+    }
+    test_res <- object@result[[lineage]]$Test1
+    DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
+    object@result[[lineage]]$DP_genes = DP_genes
+    if(LOO){
+        DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
+          # print(gene)
+          run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs, acc = acc)
+        }))
+    }
+    test_res$pvs_LOO <- test_res$pvs
+    test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
+    test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
+    object@result[[lineage]]$Test1 <- test_res
+    
+  }
+  return(object)
 }
+# run_Test1 = function(object, LOO = FALSE, num_cores = 1,LOO_pv_threshold = 0.05, npcs = 10, acc = 1e-15,parallel = FALSE ){ #, kernel_names = c('kernel_S','kernel_T', 'kernel_error')
+#   if (npcs >= length(object@signature_genes) ){
+#     npcs = length(object@signature_genes) - 2
+#     cat('number of PCs is larger than the number of signature genes, reduce the number of PCs to', npcs,'\n')
+#   }
+#   res <- get_Test1_result(object)
+#   if('pvs_adj' %in% colnames(res) & "pvs_adj_LOO" %in% colnames(res)){
+#     warning('pvs_adj_LOO already exists, please check the result slot of Tessa object')
+#     return(object)
+#   }else if('pvs_adj' %in% colnames(res) & !("pvs_adj_LOO" %in% colnames(res)) & LOO){
+#     t_vars = str_subset( colnames(object@meta_df),'lineage')
+#     for(lineage in t_vars){
+#       cat('Identifying uTSVGs for lineage ', lineage ,' ...','/n')
+#       test_res <- object@result[[lineage]]$Test1
+#       DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
+#       object@result[[lineage]]$DP_genes = DP_genes
+# 
+#       if(parallel){
+#         # cl <- makeCluster(num_cores)
+#         # DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
+#         #   run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs, acc = acc)
+#         # },object, lineage, npcs))
+#         # stopCluster(cl)
+#         DP_genes_pvs <- unlist(
+#           mclapply(DP_genes,function(gene) {
+#             run_Test1_lineage_LOO_pergene(object= object, gene= gene,lineage = lineage, npcs = npcs, acc = acc )
+#           },mc.cores  = num_cores, mc.preschedule = FALSE, mc.set.seed = TRUE  )
+#         )
+#       }else{
+#         DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
+#           print(gene)
+#           run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs, acc = acc)
+#         }))
+#       }
+#       test_res$pvs_LOO <- test_res$pvs
+#       test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
+#       test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
+#       object@result[[lineage]]$Test1 <- test_res
+#     }
+#     return(object)
+#   }else{
+#     t_vars = str_subset( colnames(object@meta_df),'lineage')
+#     for(lineage in t_vars){
+#       object <- run_Test1_lineage(object, lineage = lineage,acc = acc )
+#       test_res <- object@result[[lineage]]$Test1
+#       DP_genes <- intersect(object@signature_genes, test_res$geneid[test_res$pvs_adj < LOO_pv_threshold])
+#       object@result[[lineage]]$DP_genes = DP_genes
+# 
+#       if(LOO){
+#         if(parallel){
+#           cl <- makeCluster(num_cores)
+#           DP_genes_pvs <- unlist(parLapply(cl,DP_genes,function(gene,object, lineage, npcs){
+#             run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs, acc = acc)
+#           },object, lineage, npcs))
+#           stopCluster(cl)
+#         }else{
+#           DP_genes_pvs <- unlist(lapply(DP_genes,function(gene){
+#             print(gene)
+#             run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs, acc = acc)
+#           }))
+#         }
+#         test_res$pvs_LOO <- test_res$pvs
+#         test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
+#         test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
+#         object@result[[lineage]]$Test1 <- test_res
+#       }
+#     }
+#     return(object)
+#   }
+# }
 
 #' @title a faster version of trace of matrix multiplication
 #' @param M1 A numeric matrix
@@ -555,8 +578,6 @@ TT <- function(M1, M2){
 }
 
 
-## use gatson not MM4LMM, b/c it is the fastest by
-## https://journals.plos.org/ploscompbiol/article?id=10.1371/journal.pcbi.1009659
 #' @title Individual Test for TVG and SVG
 #' @param Y The numeric matrix with n spots (row) and k genes (column)
 #' @param covariates Covariates X as fixed effect
@@ -617,10 +638,8 @@ Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
 #' @param pv_threshold The pvalue threshold for test1, to get the uTSVGs that are significant in Test1
 #' @param LOO If TRUE, run LOO double dipping correction for Test2
 #' @param npcs The PC number to use in slingshot pseudotime estimation
-#' @import parallel
-#' @importFrom parallel parLapply parLapplyLB
 #' @export
-run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE,npcs = 30,num_cores = 1, parallel = FALSE){
+run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE,npcs = 30){
   meta_df <- na.omit(object@meta_df[,c('x','y',lineage,'Sample_ID')])
   Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(meta_df), colnames(object@gene_expression))],drop = FALSE]
 
@@ -647,64 +666,6 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
 
   res_list <- list()
   for(K_test_name in c( 'kernel_S', 'kernel_T')){
-    if(parallel){
-      res <- mclapply(genes, function(gene){
-        if(LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)){
-          ## only run LOO on TVGs detection, if this gene is used to estimate pseudotime
-          loc_df = meta_df
-          signature_genes <- setdiff(object@signature_genes, gene)
-          embedding <- prcomp_irlba(t(Y[signature_genes, ,drop = FALSE]), scale. = TRUE, n = npcs)$x
-          sim <- SingleCellExperiment(assays = Y,
-                                      reducedDims = SimpleList(PCA = embedding),
-                                      colData = DataFrame(clusterlabel = rep("0", ncol(Y)) )
-          )
-          sim  <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA',start.clus="0" )
-          loc_df[, lineage] = sim@colData@listData$slingPseudotime_1
-
-          object_loo <- CreateTessaObject(counts = Y[gene,,drop = FALSE ], meta_df = loc_df,
-                                          signature_genes =  signature_genes,
-                                          covariates = object@covariates, normalized = object@normalized )
-          object_loo <- build_kernelMatrix(object_loo, bw = object@bandwidth)
-          rm(embedding,sim,loc_df,signature_genes)
-          test2_out <- Test2(object = object_loo, gene = gene, K_test = K_test_name ,lineage = lineage)
-        }else{
-          test2_out <-Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
-        }
-        test2_out
-      },mc.cores = num_cores)
-
-      # cl <- makeCluster(num_cores)
-      # res <- parLapply(cl, genes, function(gene, object, meta_df, Y, npcs, K_test_name, LOO, DP_genes, lineage) {
-      #   if (LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)) {
-      #     ## Only run LOO on TVGs detection if this gene is used to estimate pseudotime
-      #     loc_df <- meta_df
-      #     signature_genes <- setdiff(object@signature_genes, gene)
-      #     embedding <- prcomp_irlba(t(Y[signature_genes, , drop = FALSE]), scale. = TRUE, n = npcs)$x
-      #     sim <- SingleCellExperiment(
-      #       assays = Y,
-      #       reducedDims = SimpleList(PCA = embedding),
-      #       colData = DataFrame(clusterlabel = rep("0", ncol(Y)))
-      #     )
-      #     sim <- slingshot(sim, clusterLabels = 'clusterlabel', reducedDim = 'PCA', start.clus = "0")
-      #     loc_df[, lineage] <- sim@colData@listData$slingPseudotime_1
-
-      #     object_loo <- CreateTessaObject(
-      #       counts = Y[gene, , drop = FALSE],
-      #       meta_df = loc_df,
-      #       signature_genes = signature_genes,
-      #       covariates = object@covariates,
-      #       normalized = object@normalized
-      #     )
-      #     object_loo <- build_kernelMatrix(object_loo, bw = object@bandwidth)
-      #     test2_out <- Test2(object = object_loo, gene = gene, K_test = K_test_name, lineage = lineage)
-      #   } else {
-      #     test2_out <- Test2(object = object, gene = gene, K_test = K_test_name, lineage = lineage)
-      #   }
-      #   test2_out
-
-      # }, object, meta_df, Y, npcs, K_test_name, LOO, DP_genes, lineage)  # Pass arguments explicitly
-      # stopCluster(cl)
-    }else{
       res <- lapply(genes, function(gene){
         if(LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)){
           ## only run LOO on TVGs detection, if this gene is used to estimate pseudotime
@@ -728,28 +689,17 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
         }
         test2_out
       })
-    }
-    # print(str(res))
     res <-  cbind( unlist(lapply(res, function(x){ x$p.value})),
                                       unlist(lapply(res, function(x){ x$gene})) )   
     colnames(res) <-  c(K_test_name, 'geneid')                              
     res_list[[K_test_name]] <- res 
   }
-  
-  res_df <- full_join(data.frame(res_list [[1]]),data.frame(res_list[[2]]), by = "geneid")  %>% 
-    rename('kernel_T' = 'TVG_pvs', 'kernel_S' = 'SVG_pvs') %>%
+  res_df <- full_join(data.frame(res_list [[1]]),data.frame(res_list[[2]]), by = "geneid")  %>%
+    dplyr::rename('TVG_pvs' = 'kernel_T', 'SVG_pvs' = 'kernel_S' ) %>%
     mutate(TVG_pvs_adj = p.adjust(TVG_pvs, method = 'BY'),
            SVG_pvs_adj = p.adjust(SVG_pvs, method = 'BY'))
   object@result[[lineage]][['Test2']] <- res_df[,c('geneid', 'TVG_pvs', 'TVG_pvs_adj', 'SVG_pvs', 'SVG_pvs_adj')]
   object
-  # res_list[['geneid']] <- genes
-  # # res_list %>% bind_cols()
-  # res_df <- res_list %>% bind_cols() %>% #mutate(geneid = genes) %>%
-  #   rename('kernel_T' = 'TVG_pvs', 'kernel_S' = 'SVG_pvs') %>%
-  #   mutate(TVG_pvs_adj = p.adjust(TVG_pvs, method = 'BY'),
-  #          SVG_pvs_adj = p.adjust(SVG_pvs, method = 'BY'))
-  # object@result[[lineage]][['Test2']] <- res_df[,c('geneid', 'TVG_pvs', 'TVG_pvs_adj', 'SVG_pvs', 'SVG_pvs_adj')]
-  # object
 }
 
 #' @title Run Test2 for all lineages

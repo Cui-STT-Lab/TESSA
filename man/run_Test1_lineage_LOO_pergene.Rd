@@ -8,8 +8,8 @@ run_Test1_lineage_LOO_pergene(
   object,
   gene,
   lineage = "lineage1",
-  acc = 1e-07,
-  npcs = 30
+  acc = 1e-15,
+  npcs = 10
 )
 }
 \arguments{

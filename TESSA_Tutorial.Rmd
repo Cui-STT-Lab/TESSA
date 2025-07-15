@@ -1,0 +1,83 @@
+---
+title: "tutorial"
+author: "Yuesong"
+date: "2025-07-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, show = F}
+library(TESSA)
+library(dplyr)
+library(ggplot2)
+
+
+# if (!require("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# BiocManager::install("SingleCellExperiment")
+```
+
+## Load data
+```{r}
+load('./data/PDAC_S2A.rda')
+```
+
+## Create TessaObject 
+We used sample S2A from the PDAC dataset as a main example. The required input is a raw count matrix `counts`, a metadata dataframe including spatial coordinates and estimated pseudotime `meta_df` and signature genes used to estimate pseudotime `mkgenes`. Firstly, We preprocess the data by filtering out low quality spots with less than 10 genes detected and genes that expressed in less than 10% of the spots by `data_preprocess()`. Secondly, we construct spatial and pseudotime kernels by `build_kernelMatrix`.
+```{r}
+Tessa.obj =  CreateTessaObject(counts = counts, meta_df = meta_df,
+                               signature_genes = mkgenes,
+                               covariates = NULL, normalized = FALSE)
+Tessa.obj = data_preprocess(object = Tessa.obj, spot.threshold = 10, gene.threshold = 0.1)
+Tessa.obj = build_kernelMatrix(Tessa.obj)
+
+```
+
+## TESSA Stage 1 Test 
+
+We first run stage 1 overall test to identify unified TSVGs (uTSVGs), refers to genes exhibits either temporal and spatial patterns. `run_Test1()` run stage 1 test for all lineages in the metadata and `get_Test1_result()` extracts the p-value restult. To address the double dipping issue, refers that genes used twice for both pseudotime estimation and testing, leading to seriously inflated type I errors, we apply Leave-One-Out(LOO) correction by setting parameter as `LOO = TRUE`. The genes with ` < 0.05` are idenfied as uTSVGs. 
+
+```{r}
+# system.time(
+#   Tessa.obj <-  run_Test1(Tessa.obj,LOO = FALSE, npcs = 10)  
+# )
+```
+
+
+```{r}
+system.time(
+  Tessa.obj <-  run_Test1(Tessa.obj, LOO = TRUE, npcs = 10)  
+)
+
+uTSVGs_result <- get_Test1_result(Tessa.obj) %>% filter(pvs_adj_LOO < 0.05)
+head(uTSVGs_result)
+
+## uTSVGs for each lineage
+uTSVGs_list <- split(uTSVGs_result$geneid, uTSVGs_result$lineage)
+str(uTSVGs_list)
+
+## uTSVGs for all lineages
+uTSVGs <- unique(unlist(uTSVGs_list))
+```
+
+
+## TESSA Stage 2 Test
+
+We could further dissect whether a uTSVG is temporally variable gene(TVG), or spatially variable gene(SVG) by conduction stage 2 individual test. To save time, here we run stage 2 test for 2 genes by `run_Test2_lineage()` as a quick demo. 
+
+```{r}
+system.time(
+Tessa.obj <-  run_Test2_lineage(Tessa.obj, LOO = TRUE,lineage = 'lineage1',genes = c("HES4", "ISG15"))
+)
+Test2_result <- get_Test2_result(Tessa.obj)
+Test2_result
+```
+
+
+## Notes for Pseudotime estimation and LOO double dipping correction
+
+Double dipping issue, refers that genes used twice for both pseudotime estimation and testing, leading to seriously inflated type I errors. To address it, LOO is based on a simple gene-splitting idea that if we want to test gene A, we re-estimate the pseudotime without gene A. In theory, LOO can be applied to any pseudotime estimation algorithm, but in practice, we set Slingshot as the default pseudotime estimation algorithm to apply LOO correction in Tessa package. To construct a meaningful pseudotime and reduce the confounding between spatial and temporal effect, we recommend user to infer pseudotime using gene expression based pseudotime inference method like Slingshot, with a concise and strong signature genes. For example, in this PDAC sample, we are interested in the ductal tumor progression, so we choose 31 signature genes related to normal ductal, tumor ductal and stromaCAF. 
+

@@ -9,9 +9,7 @@ run_Test2_lineage(
   lineage = "lineage1",
   genes = NULL,
   LOO = FALSE,
-  npcs = 30,
-  num_cores = 1,
-  parallel = FALSE
+  npcs = 30
 )
 }
 \arguments{
