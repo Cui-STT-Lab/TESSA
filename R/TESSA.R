@@ -482,10 +482,11 @@ run_Test1 = function(object, LOO = FALSE, LOO_pv_threshold = 0.05, npcs = 10, ac
           # print(gene)
           run_Test1_lineage_LOO_pergene(object = object, gene = gene, lineage = lineage, npcs = npcs, acc = acc)
         }))
+        test_res$pvs_LOO <- test_res$pvs
+        test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
+        test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
     }
-    test_res$pvs_LOO <- test_res$pvs
-    test_res$pvs_LOO[match(DP_genes,test_res$geneid )] <- DP_genes_pvs
-    test_res$pvs_adj_LOO <- p.adjust(test_res$pvs_LOO, method = 'BY')
+    
     object@result[[lineage]]$Test1 <- test_res
     
   }
@@ -644,7 +645,7 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
   Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(meta_df), colnames(object@gene_expression))],drop = FALSE]
 
   if(!is.null(genes)){
-    cat('run Test2 on user defined ', length(genes) ,' uTSVGs on all lineages', '\n')
+    cat('run Test2 on user defined ', length(genes) ,' uTSVGs on ', lineage, '\n')
   }else{
     Test1_result <- get_Test1_result(object,lineage = lineage)
     if('pvs_adj_LOO' %in% colnames(Test1_result)){

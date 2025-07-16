@@ -35,15 +35,19 @@ Tessa.obj = data_preprocess(object = Tessa.obj, spot.threshold = 10, gene.thresh
 Tessa.obj = build_kernelMatrix(Tessa.obj)
 
 ```
+```{r}
+str(Tessa.obj )
+```
+
 
 ## TESSA Stage 1 Test 
 
 We first run stage 1 overall test to identify unified TSVGs (uTSVGs), refers to genes exhibits either temporal and spatial patterns. `run_Test1()` run stage 1 test for all lineages in the metadata and `get_Test1_result()` extracts the p-value restult. To address the double dipping issue, refers that genes used twice for both pseudotime estimation and testing, leading to seriously inflated type I errors, we apply Leave-One-Out(LOO) correction by setting parameter as `LOO = TRUE`. The genes with ` < 0.05` are idenfied as uTSVGs. 
 
 ```{r}
-# system.time(
-#   Tessa.obj <-  run_Test1(Tessa.obj,LOO = FALSE, npcs = 10)  
-# )
+system.time(
+  Tessa.obj <-  run_Test1(Tessa.obj,LOO = FALSE, npcs = 10)
+)
 ```
 
 
