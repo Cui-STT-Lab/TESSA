@@ -1,4 +1,7 @@
-# TESSA
+# TESSA: A unified model to detect trajectory-preserved and spatially-variable genes in spatial transcriptomics
+
+![Tutorial screenshot](TESSA_schematic.jpg)
+
 ## Installation
 To install the latest version of the TESSA package from GitHub, run the following code in R:
 <!-- test how to install when we are public repo? -->
