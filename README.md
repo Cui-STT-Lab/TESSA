@@ -12,7 +12,10 @@ devtools::install_github('Cui-STT-Lab/TESSA')
 ```
 This command should automatically install all required packages if they are not installed already.
 
-## Quick Start
+## Tutorial
+
+[View the tutorial](TESSA_Tutorial.html)
+
 <!-- See [Tutorial](https://lulushang.org/Celina_Tutorial/index.html) for detailed documentation and examples. -->
 
 
