@@ -18,7 +18,7 @@ This command should automatically install all required packages if they are not 
 
 ## Tutorial
 
-[View the tutorial](TESSA_Tutorial.html)
+[View the tutorial](https://yuesongwu.github.io/TESSA/TESSA_Tutorial.html) for detailed documentation and examples
 
 <!-- See [Tutorial](https://lulushang.org/Celina_Tutorial/index.html) for detailed documentation and examples. -->
 
