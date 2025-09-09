@@ -4,10 +4,15 @@
 
 ## Installation
 To install the latest version of the TESSA package from GitHub, run the following code in R:
-<!-- test how to install when we are public repo? -->
+
 ```
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("slingshot")
+
+
 install.packages('devtools')
-library(devtools)
 devtools::install_github('Cui-STT-Lab/TESSA')
 ```
 This command should automatically install all required packages if they are not installed already.
