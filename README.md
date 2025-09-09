@@ -8,7 +8,6 @@ To install the latest version of the TESSA package from GitHub, run the followin
 ```
 if (!require("BiocManager", quietly = TRUE))
     install.packages("BiocManager")
-
 BiocManager::install("slingshot")
 
 
