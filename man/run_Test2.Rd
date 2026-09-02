@@ -4,16 +4,33 @@
 \alias{run_Test2}
 \title{Run Test2 for all lineages}
 \usage{
-run_Test2(object, genes = NULL, pv_threshold = 0.05, LOO = TRUE)
+run_Test2(
+  object,
+  genes = NULL,
+  pv_threshold = 0.05,
+  LOO = TRUE,
+  parallel = TRUE,
+  workers = 2L,
+  mc.preschedule = TRUE,
+  control_blas = TRUE
+)
 }
 \arguments{
+\item{object}{The TESSA object}
+
 \item{genes}{The genes to do Test2. If NULL, then test all the uTSVGs}
 
 \item{pv_threshold}{The pvalue threshold for test1, to get the uTSVGs that are significant in Test1}
 
 \item{LOO}{If TRUE, run LOO double dipping correction for Test2}
 
-\item{obejct}{The TESSA object}
+\item{parallel}{If TRUE, run independent gene tests with fork-based parallelism on Unix-like systems; Windows falls back to serial execution}
+
+\item{workers}{Number of fork workers used when parallel is TRUE}
+
+\item{mc.preschedule}{Passed to parallel::mclapply}
+
+\item{control_blas}{If TRUE, limit BLAS and OpenMP to one thread per fork worker when RhpcBLASctl is available}
 }
 \description{
 Run Test2 for all lineages

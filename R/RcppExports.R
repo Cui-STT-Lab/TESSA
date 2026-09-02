@@ -9,3 +9,7 @@ invert <- function(X) {
     .Call(`_TESSA_invert`, X)
 }
 
+TT_cpp <- function(M1, M2) {
+    .Call(`_TESSA_TT_cpp`, M1, M2)
+}
+

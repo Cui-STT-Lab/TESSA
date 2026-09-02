@@ -33,10 +33,23 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// TT_cpp
+double TT_cpp(const arma::mat& M1, const arma::mat& M2);
+RcppExport SEXP _TESSA_TT_cpp(SEXP M1SEXP, SEXP M2SEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type M1(M1SEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type M2(M2SEXP);
+    rcpp_result_gen = Rcpp::wrap(TT_cpp(M1, M2));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_TESSA_baseSVD", (DL_FUNC) &_TESSA_baseSVD, 1},
     {"_TESSA_invert", (DL_FUNC) &_TESSA_invert, 1},
+    {"_TESSA_TT_cpp", (DL_FUNC) &_TESSA_TT_cpp, 2},
     {NULL, NULL, 0}
 };
 

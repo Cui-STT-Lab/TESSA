@@ -13,20 +13,86 @@ knitr::opts_chunk$set(echo = TRUE)
 library(TESSA)
 library(dplyr)
 library(ggplot2)
+library(Seurat)
+library(SingleCellExperiment)
+library(slingshot)
 
-
-# if (!require("BiocManager", quietly = TRUE))
-#     install.packages("BiocManager")
-# BiocManager::install("SingleCellExperiment")
 ```
 
-## Load data
+## Load data and signature genes 
+We used sample S2A from the PDAC dataset as a main example. First, load PDAC S2A sample as a Seurat object and signature genes for normal ductal cells, tumor ductal cells and stroma cancer associated fibroblast(CAF) cells. 
+
 ```{r}
-load('./data/PDAC_S2A.rda')
+seu.obj <- readRDS('./data/PDAC_S2A_seurat.rds')
+seu.obj 
+
+## 
+mklist <- list(
+  'NormalDuctal' = c('KRT19', 'EPCAM', 'GATA6', 'CFTR', 'MUC1', 'KRT7', 'CDH1', 'HNF1A', 'FOXA2'),
+  'TumorDuctal' = c('KRT19', 'MUC1', 'MUC5AC', 'CEACAM6', 'S100P', 'SOX9', 'ZEB1', 'SNAI2', 'TP63', 'FN1', 'CD44', 'VIM','TFF1','TFF2'),
+  'StromaCAF' = c('COL1A1', 'FN1', 'SPARC', 'ACTA2', 'PDGFRB', 'POSTN', 'LOXL2', 'MMP2', 'MMP9', 'FAP', 'TGFB1', 'CXCL12', 'CCL2')
+)
+mkgenes = unique(unlist(mklist))
+mkgenes = intersect(mkgenes, rownames(seu.obj))
+str(mkgenes)
 ```
+
+## Pseudotime inference by slingshot 
+
+Here, we use signature genes to estimate pseudotime. Because we only have 33 signature genes, we set the number of principal components as 10. 
+
+```{r}
+seu.obj <- SCTransform(seu.obj, assay = "Spatial", verbose = FALSE, residual.features = NULL, return.only.var.genes = FALSE ) 
+seu.obj <- RunPCA(seu.obj, assay = "SCT", verbose = FALSE, features = mkgenes)
+npcs = 10
+seu.obj <- FindNeighbors(seu.obj, dims = 1:npcs,verbose = F)
+seu.obj <- FindClusters(seu.obj,resolution = 0.25,verbose = F)
+seu.obj <- RunUMAP(seu.obj, dims = 1:npcs,verbose = F)
+
+
+sim <- SingleCellExperiment(assays = seu.obj[['Spatial']]$counts, colData =  seu.obj@meta.data)
+embedding <-  Embeddings(seu.obj, reduction = "pca") 
+reducedDims(sim) <- SimpleList(PCA = embedding[,1:npcs])
+sim  <- slingshot(sim, clusterLabels = 'seurat_clusters', reducedDim = 'PCA',start.clus="4" )  
+summary(sim@colData@listData)
+seu.obj@meta.data$slingshot_t1 = sim@colData@listData$slingPseudotime_1
+seu.obj@meta.data$slingshot_t2 = sim@colData@listData$slingPseudotime_2
+
+```
+
+Visualization of pseudotime on both umap and spatial coordinates.
+
+```{r}
+options(repr.plot.width = 10, repr.plot.height = 5)
+pt.size = 2.4; cont_cols <- c("#fafbd4",'#5c92b6')
+
+FeaturePlot(seu.obj, features = 'slingshot_t1', cols = cont_cols) + NoLegend()  &   theme(plot.title = element_blank())  | 
+FeaturePlot(seu.obj, features = 'slingshot_t2', cols = cont_cols)+ NoLegend() &   theme(plot.title = element_blank()) 
+
+SpatialFeaturePlot(seu.obj, features = 'slingshot_t1', pt.size = pt.size, alpha = 1) & 
+  ggplot2::scale_fill_gradientn(colors = cont_cols)  & theme(legend.title = element_text(size = 20))|
+SpatialFeaturePlot(seu.obj, features = 'slingshot_t2', pt.size = pt.size) & 
+  ggplot2::scale_fill_gradientn(colors = cont_cols)& theme(legend.title = element_text(size = 20))
+```
+
 
 ## Create TessaObject 
-We used sample S2A from the PDAC dataset as a main example. The required input is a raw count matrix `counts`, a metadata dataframe including spatial coordinates and estimated pseudotime `meta_df` and signature genes used to estimate pseudotime `mkgenes`. Firstly, We preprocess the data by filtering out low quality spots with less than 10 genes detected and genes that expressed in less than 10% of the spots by `data_preprocess()`. Secondly, we construct spatial and pseudotime kernels by `build_kernelMatrix`.
+
+### Prepare input data 
+
+The required input is a raw count matrix `counts`, a metadata dataframe including spatial coordinates, estimated pseudotime `meta_df` and sample ID, and signature genes used to estimate pseudotime `mkgenes`. 
+
+```{r}
+counts = seu.obj[['Spatial']]$counts
+locations = GetTissueCoordinates(seu.obj)[,c('x','y')]
+meta_df = data.frame(x = GetTissueCoordinates(seu.obj)$x,
+                     y = GetTissueCoordinates(seu.obj)$y,
+                     lineage1 = seu.obj$slingshot_t1,
+                     lineage2 = seu.obj$slingshot_t2,
+                     Sample_ID = 'S2A')
+```
+
+Firstly, We preprocess the data by filtering out low quality spots with less than 10 genes detected and genes that expressed in less than 10% of the spots by `data_preprocess()`. Secondly, we construct spatial and pseudotime kernels by `build_kernelMatrix`.
 ```{r}
 Tessa.obj =  CreateTessaObject(counts = counts, meta_df = meta_df,
                                signature_genes = mkgenes,
@@ -35,9 +101,7 @@ Tessa.obj = data_preprocess(object = Tessa.obj, spot.threshold = 10, gene.thresh
 Tessa.obj = build_kernelMatrix(Tessa.obj)
 
 ```
-```{r}
-str(Tessa.obj )
-```
+
 
 
 ## TESSA Stage 1 Test 

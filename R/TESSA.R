@@ -563,29 +563,43 @@ run_Test1 = function(object, LOO = FALSE, LOO_pv_threshold = 0.05, npcs = 10, ac
 #   }
 # }
 
-#' @title a faster version of trace of matrix multiplication
+#' @title Trace of matrix multiplication using RcppArmadillo
 #' @param M1 A numeric matrix
 #' @param M2 A numeric matrix
 #' @return Trace of matrix multiplication
 TT <- function(M1, M2){
-  nn <- nrow(M1)
-  S <- c()
-  for (itt in 1 : nn)
-  {
-    S[itt] <- sum(M1[itt, ]*M2[, itt])
-  }
-  trace <- sum(S)
-  return(trace)
+  TT_cpp(M1, M2)
 }
 
 
-#' @title Individual Test for TVG and SVG
-#' @param Y The numeric matrix with n spots (row) and k genes (column)
-#' @param covariates Covariates X as fixed effect
-#' @param kernel_mat_list A list of kernel matrix, as random effect. kernel_S, kernel_T and kernel_error
+#' @title Invert a covariance matrix with Cholesky fallback
+#' @description Uses a Cholesky inverse when possible and falls back to the
+#' general inverse if Cholesky fails or returns non-finite values.
+#' @param V A numeric covariance matrix
+#' @return The inverse of V
+invert_covariance <- function(V){
+  V_inv <- tryCatch(
+    chol2inv(chol(V)),
+    error = function(e) NULL
+  )
+  if(is.null(V_inv) || any(!is.finite(V_inv))){
+    V_inv <- inv(V)
+  }
+  V_inv
+}
+
+
+#' @title Legacy Individual Test for TVG and SVG
+#' @description Original Test 2 implementation retained for reproducibility.
+#' @param object A TESSA object
+#' @param gene Gene to test
+#' @param K_test Name of the kernel being tested
+#' @param lineage Name of the lineage
+#' @return A list containing the gene, variance components, score, degrees of
+#' freedom, scale, and p-value
 #' @import gaston
 #' @importFrom gaston lmm.aireml
-Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
+legacy_Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
   KList = object@kernel[[lineage]][setdiff(names(object@kernel[[lineage]]), c(K_test, 'kernel_error'))]
   K_alt = object@kernel[[lineage]][[K_test]]
   Y = object@gene_expression
@@ -633,14 +647,162 @@ Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
 }
 
 
+#' @title Individual Test for TVG and SVG
+#' @description Score test for one kernel conditional on all remaining kernels
+#' and the residual variance. Repeated projection-kernel products are cached,
+#' trace products are evaluated by RcppArmadillo, and covariance inversion uses
+#' Cholesky with a general-inverse fallback.
+#' @param object A TESSA object
+#' @param gene Gene to test
+#' @param K_test Name of the kernel being tested
+#' @param lineage Name of the lineage
+#' @return A list containing the gene, null-model variance components, score,
+#' degrees of freedom, scale, and p-value
+#' @import gaston
+#' @importFrom gaston lmm.aireml
+Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
+  kernel_list <- object@kernel[[lineage]]
+  if(!K_test %in% names(kernel_list)){
+    stop("K_test is not present in the kernel list: ", K_test)
+  }
+  if(!"kernel_error" %in% names(kernel_list)){
+    stop("The kernel list must contain 'kernel_error'.")
+  }
+
+  null_kernel_names <- setdiff(names(kernel_list), c(K_test, "kernel_error"))
+  KList <- kernel_list[null_kernel_names]
+  K_error <- kernel_list[["kernel_error"]]
+  K_alt <- kernel_list[[K_test]]
+
+  Y <- object@gene_expression
+  Y <- Y[gene, colnames(Y)[match(rownames(K_alt), colnames(Y))]]
+  n <- length(Y)
+  if(!is.null(object@covariates)){
+    X <- object@covariates
+  }else{
+    X <- matrix(1, n, 1)
+  }
+
+  model.l <- gaston::lmm.aireml(
+    Y = Y,
+    X = X,
+    K = KList,
+    verbose = FALSE
+  )
+  VCs <- c(model.l$tau, model.l$sigma2)
+  names(VCs) <- c(null_kernel_names, "kernel_error")
+
+  V_l <- model.l$sigma2 * K_error
+  for(i in seq_along(KList)){
+    V_l <- V_l + model.l$tau[i] * KList[[i]]
+  }
+  V_l_inv <- invert_covariance(V_l)
+  P_l <- V_l_inv - V_l_inv %*% X %*%
+    invert(t(X) %*% V_l_inv %*% X) %*% t(X) %*% V_l_inv
+
+  nuisance_kernels <- c(KList, list(kernel_error = K_error))
+
+  ## Cache all repeated matrix products used by the score and information.
+  Py <- P_l %*% Y
+  PK_alt <- P_l %*% K_alt
+  PK_nuisance <- lapply(names(nuisance_kernels), function(kernel_name){
+    if(kernel_name == "kernel_error"){
+      P_l
+    }else{
+      P_l %*% nuisance_kernels[[kernel_name]]
+    }
+  })
+  names(PK_nuisance) <- names(nuisance_kernels)
+
+  Q <- drop(crossprod(Py, K_alt %*% Py))/2
+  e <- TT(P_l, K_alt)/2
+
+  num_VC <- length(nuisance_kernels)
+  Ill_values <- c()
+  for(i in seq_along(PK_nuisance)){
+    for(j in seq_along(PK_nuisance)){
+      Ill_values <- c(
+        Ill_values,
+        TT(PK_nuisance[[i]], PK_nuisance[[j]])
+      )
+    }
+  }
+  I_l_l <- matrix(
+    Ill_values,
+    nrow = num_VC,
+    ncol = num_VC,
+    byrow = TRUE
+  )/2
+  Il_l <- matrix(
+    unlist(lapply(PK_nuisance, function(PK){
+      TT(PK_alt, PK)
+    })),
+    nrow = 1,
+    ncol = num_VC,
+    byrow = TRUE
+  )/2
+  Ill <- TT(PK_alt, PK_alt)/2
+  Itt <- drop(Ill - Il_l %*% pinv(I_l_l) %*% t(Il_l))
+  k <- Itt/e/2
+  v <- 2*e^2/Itt
+  pvalue <- pchisq(Q/k, df = v, lower.tail = FALSE)
+
+  list(
+    gene = gene,
+    VCs = VCs,
+    Score = Q,
+    df = v,
+    scale = k,
+    p.value = pvalue
+  )
+}
+
+
 #' @title Run Test2 for selected genes for one lineage
-#' @param obejct  The TESSA object
+#' @param object The TESSA object
+#' @param lineage Name of the lineage to test
 #' @param genes The genes to do Test2. If NULL, then test all the uTSVGs
-#' @param pv_threshold The pvalue threshold for test1, to get the uTSVGs that are significant in Test1
 #' @param LOO If TRUE, run LOO double dipping correction for Test2
 #' @param npcs The PC number to use in slingshot pseudotime estimation
+#' @param parallel If TRUE, run independent gene tests with fork-based parallelism on Unix-like systems; Windows falls back to serial execution
+#' @param workers Number of fork workers used when parallel is TRUE
+#' @param mc.preschedule Passed to parallel::mclapply; FALSE is slower but isolates gene-level errors more clearly
+#' @param control_blas If TRUE, use RhpcBLASctl when available to limit BLAS and OpenMP to one thread per fork worker
 #' @export
-run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE,npcs = 30){
+run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = FALSE,npcs = 30,
+                             parallel = TRUE, workers = 2L, mc.preschedule = TRUE,
+                             control_blas = TRUE){
+  if (!is.logical(parallel) || length(parallel) != 1L || is.na(parallel)) {
+    stop("'parallel' must be TRUE or FALSE.")
+  }
+  workers <- as.integer(workers)
+  if (length(workers) != 1L || is.na(workers) || workers < 1L) {
+    stop("'workers' must be one positive integer.")
+  }
+  use_multicore <- isTRUE(parallel) && workers > 1L
+  if (use_multicore && .Platform$OS.type != "unix") {
+    warning("Fork-based Test2 parallelism is unavailable on Windows; using serial execution.")
+    use_multicore <- FALSE
+  }
+
+  if (use_multicore && isTRUE(control_blas)) {
+    if (requireNamespace("RhpcBLASctl", quietly = TRUE)) {
+      old_blas_threads <- RhpcBLASctl::blas_get_num_procs()
+      old_omp_threads <- RhpcBLASctl::omp_get_max_threads()
+      RhpcBLASctl::blas_set_num_threads(1L)
+      RhpcBLASctl::omp_set_num_threads(1L)
+      on.exit({
+        RhpcBLASctl::blas_set_num_threads(old_blas_threads)
+        RhpcBLASctl::omp_set_num_threads(old_omp_threads)
+      }, add = TRUE)
+    } else {
+      warning(
+        "RhpcBLASctl is not installed; continuing without explicit BLAS/OpenMP thread control. ",
+        "Install RhpcBLASctl or set control_blas = FALSE to suppress this warning."
+      )
+    }
+  }
+
   meta_df <- na.omit(object@meta_df[,c('x','y',lineage,'Sample_ID')])
   Y <- object@gene_expression[,colnames(object@gene_expression)[match(rownames(meta_df), colnames(object@gene_expression))],drop = FALSE]
 
@@ -667,8 +829,8 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
 
   res_list <- list()
   for(K_test_name in c( 'kernel_S', 'kernel_T')){
-      res <- lapply(genes, function(gene){
-        if(LOO & (K_test_name == 'kernel_T') & (gene %in% DP_genes)){
+      test_one_gene <- function(gene){
+        if(LOO && (K_test_name == 'kernel_T') && (gene %in% DP_genes)){
           ## only run LOO on TVGs detection, if this gene is used to estimate pseudotime
           loc_df = meta_df
           signature_genes <- setdiff(object@signature_genes, gene)
@@ -686,13 +848,35 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
           object <- build_kernelMatrix(object_loo, bw = object@bandwidth)
           test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
         }else{
-          test2_out <-Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+          test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
         }
         test2_out
-      })
-    res <-  cbind( unlist(lapply(res, function(x){ x$p.value})),
-                                      unlist(lapply(res, function(x){ x$gene})) )   
-    colnames(res) <-  c(K_test_name, 'geneid')                              
+      }
+      if (use_multicore) {
+        res <- parallel::mclapply(
+          genes,
+          test_one_gene,
+          mc.cores = workers,
+          mc.preschedule = mc.preschedule,
+          mc.set.seed = FALSE
+        )
+        failed <- vapply(res, inherits, logical(1), what = "try-error")
+        if (any(failed)) {
+          stop(
+            "Parallel Test2 failed for: ",
+            paste(genes[failed], collapse = ", "),
+            ". Re-run with parallel = FALSE or mc.preschedule = FALSE for diagnosis."
+          )
+        }
+      } else {
+        res <- lapply(genes, test_one_gene)
+      }
+    res <- data.frame(
+      pvalue = vapply(res, function(x) as.numeric(x$p.value), numeric(1)),
+      geneid = vapply(res, function(x) as.character(x$gene), character(1)),
+      stringsAsFactors = FALSE
+    )
+    colnames(res)[1] <- K_test_name
     res_list[[K_test_name]] <- res 
   }
   res_df <- full_join(data.frame(res_list [[1]]),data.frame(res_list[[2]]), by = "geneid")  %>%
@@ -704,18 +888,33 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
 }
 
 #' @title Run Test2 for all lineages
-#' @param obejct  The TESSA object
+#' @param object The TESSA object
 #' @param genes The genes to do Test2. If NULL, then test all the uTSVGs
 #' @param pv_threshold The pvalue threshold for test1, to get the uTSVGs that are significant in Test1
 #' @param LOO If TRUE, run LOO double dipping correction for Test2
+#' @param parallel If TRUE, run independent gene tests with fork-based parallelism on Unix-like systems; Windows falls back to serial execution
+#' @param workers Number of fork workers used when parallel is TRUE
+#' @param mc.preschedule Passed to parallel::mclapply
+#' @param control_blas If TRUE, limit BLAS and OpenMP to one thread per fork worker when RhpcBLASctl is available
 #' @export
-run_Test2 = function(object, genes = NULL, pv_threshold = 0.05, LOO = TRUE){
+run_Test2 = function(object, genes = NULL, pv_threshold = 0.05, LOO = TRUE,
+                     parallel = TRUE, workers = 2L, mc.preschedule = TRUE,
+                     control_blas = TRUE){
   if(!is.null(genes)){
     cat('run Test2 on user defined ', length(genes) ,' uTSVGs on all lineages', '\n')
   }
   t_vars = str_subset( colnames(object@meta_df),'lineage')
   for(lineage in t_vars){
-    object <- run_Test2_lineage(object, lineage = lineage, genes = genes, LOO = LOO)
+    object <- run_Test2_lineage(
+      object,
+      lineage = lineage,
+      genes = genes,
+      LOO = LOO,
+      parallel = parallel,
+      workers = workers,
+      mc.preschedule = mc.preschedule,
+      control_blas = control_blas
+    )
   }
   object
 

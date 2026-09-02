@@ -7,12 +7,23 @@
 Test2(object, gene, K_test, lineage = "lineage1")
 }
 \arguments{
-\item{Y}{The numeric matrix with n spots (row) and k genes (column)}
+\item{object}{A TESSA object}
 
-\item{covariates}{Covariates X as fixed effect}
+\item{gene}{Gene to test}
 
-\item{kernel_mat_list}{A list of kernel matrix, as random effect. kernel_S, kernel_T and kernel_error}
+\item{K_test}{Name of the kernel being tested}
+
+\item{lineage}{Name of the lineage}
+}
+\value{
+A list containing the gene, null-model variance components, score,
+degrees of freedom, scale, and p-value
 }
 \description{
-Individual Test for TVG and SVG
+Score test for one kernel conditional on all remaining kernels and the
+residual variance. This implementation follows the Test 2 formulas in the
+TESSA supplementary material, supports multiple null kernels, and caches
+repeated projection-kernel matrix products. Trace products are evaluated by
+an allocation-free RcppArmadillo implementation. Covariance inversion uses
+Cholesky when possible and falls back to the general inverse if needed.
 }

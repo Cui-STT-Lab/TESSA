@@ -2,7 +2,7 @@
 % Please edit documentation in R/TESSA.R
 \name{TT}
 \alias{TT}
-\title{a faster version of trace of matrix multiplication}
+\title{Trace of matrix multiplication using RcppArmadillo}
 \usage{
 TT(M1, M2)
 }
@@ -15,5 +15,6 @@ TT(M1, M2)
 Trace of matrix multiplication
 }
 \description{
-a faster version of trace of matrix multiplication
+Computes the trace of a matrix product using an allocation-free
+RcppArmadillo implementation.
 }
