@@ -15,6 +15,5 @@ TT(M1, M2)
 Trace of matrix multiplication
 }
 \description{
-Computes the trace of a matrix product using an allocation-free
-RcppArmadillo implementation.
+Trace of matrix multiplication using RcppArmadillo
 }

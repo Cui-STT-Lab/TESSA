@@ -13,6 +13,6 @@ invert_covariance(V)
 The inverse of V
 }
 \description{
-Uses a Cholesky inverse when possible and falls back to the general inverse
-if Cholesky fails or returns non-finite values.
+Uses a Cholesky inverse when possible and falls back to the
+general inverse if Cholesky fails or returns non-finite values.
 }

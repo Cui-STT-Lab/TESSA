@@ -589,64 +589,6 @@ invert_covariance <- function(V){
 }
 
 
-#' @title Legacy Individual Test for TVG and SVG
-#' @description Original Test 2 implementation retained for reproducibility.
-#' @param object A TESSA object
-#' @param gene Gene to test
-#' @param K_test Name of the kernel being tested
-#' @param lineage Name of the lineage
-#' @return A list containing the gene, variance components, score, degrees of
-#' freedom, scale, and p-value
-#' @import gaston
-#' @importFrom gaston lmm.aireml
-legacy_Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
-  KList = object@kernel[[lineage]][setdiff(names(object@kernel[[lineage]]), c(K_test, 'kernel_error'))]
-  K_alt = object@kernel[[lineage]][[K_test]]
-  Y = object@gene_expression
-  Y = Y[gene,colnames(Y)[match(rownames(K_alt),colnames(Y))]]
-  n = length(Y)
-  if(!is.null(object@covariates )){
-    X <- object@covariates
-  }else{
-    X <- matrix(1, n, 1)
-  }
-
-  ## parameter estimation
-  model.l <- gaston::lmm.aireml(Y = Y, X = X,K = KList,verbose = FALSE)
-  VCs <- c(model.l$tau, model.l$sigma2 );names(VCs) <- c(K_test, 'kernel_error')
-  ## if directly use estimation (may try extract info from algo )
-  V_l <-  0
-  for(i in seq_along(KList)){
-    V_l <- V_l +  model.l$tau * KList[[i]]
-  }
-  V_l <- V_l + model.l$sigma2*object@kernel[[lineage]][['kernel_error']]
-  # V_l_inv <- invert(V_l)
-  V_l_inv <- inv(V_l)
-  P_l <- V_l_inv - V_l_inv%*%X%*% invert(t(X)%*%V_l_inv%*%X) %*%t(X)%*%V_l_inv
-
-  Q <- (t(Y) %*% P_l %*% K_alt %*% P_l%*% Y )/2
-  e <- TT(P_l, K_alt)/2
-
-  num_VC = length(KList) #number of VC in Null model
-  Ill_values <- c()
-  for(i in seq_along(KList)){
-    for(j in seq_along(KList)){
-      Ill_values <- c(Ill_values, TT(P_l %*% KList[[i]], P_l %*% KList[[j]]  ))
-    }
-  }
-  rm(model.l)
-  I_l_l <- matrix(Ill_values ,nrow = num_VC ,ncol = num_VC, byrow = TRUE )/2
-  Il_l <- matrix(unlist(lapply(KList, function(K){TT(P_l %*% K_alt, P_l %*% K )}))
-                 ,nrow = 1 ,ncol = num_VC, byrow = TRUE)/2
-  Ill <- TT(P_l %*% K_alt, P_l %*% K_alt )/2
-  Itt <- Ill-Il_l%*%pinv(I_l_l)%*%t(Il_l) #Ill_tilde
-  k <- Itt/e/2; v=2*e^2/Itt
-  pvalue <- pchisq(Q/k, df=v, lower.tail=F)
-  out <- list(gene = gene,VCs=VCs, Score=Q, df=v, scale=k, p.value=pvalue)
-  return(out)
-}
-
-
 #' @title Individual Test for TVG and SVG
 #' @description Score test for one kernel conditional on all remaining kernels
 #' and the residual variance. Repeated projection-kernel products are cached,
@@ -660,7 +602,8 @@ legacy_Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
 #' degrees of freedom, scale, and p-value
 #' @import gaston
 #' @importFrom gaston lmm.aireml
-Test2 <- function(object, gene, K_test, lineage = 'lineage1'){
+#' @export
+runTest2 <- function(object, gene, K_test, lineage = 'lineage1'){
   kernel_list <- object@kernel[[lineage]]
   if(!K_test %in% names(kernel_list)){
     stop("K_test is not present in the kernel list: ", K_test)
@@ -846,9 +789,9 @@ run_Test2_lineage = function(object, lineage = 'lineage1', genes = NULL, LOO = F
                                           signature_genes =  signature_genes,
                                           covariates = object@covariates, normalized = object@normalized )
           object <- build_kernelMatrix(object_loo, bw = object@bandwidth)
-          test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+          test2_out <- runTest2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
         }else{
-          test2_out <- Test2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
+          test2_out <- runTest2(object = object, gene = gene, K_test = K_test_name ,lineage = lineage)
         }
         test2_out
       }
